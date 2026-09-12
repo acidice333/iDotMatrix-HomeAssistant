@@ -276,3 +276,19 @@ test("configured display defaults and the editor fields are honored", async () =
   ])
     assert.ok(names.includes(name));
 });
+
+test("reactive updates while detached do not reopen subscriptions", async () => {
+  const { card, subs, calls } = await harness();
+  const count = subs.length;
+  card.remove();
+  card._size = 64;
+  await card.updateComplete;
+  await tick();
+  const detachedCalls = calls.length;
+  await tick();
+  assert.equal(calls.length, detachedCalls);
+  document.body.append(card);
+  await card.updateComplete;
+  await tick();
+  assert.equal(subs.length, count * 2);
+});

@@ -481,6 +481,7 @@ export class IDotMatrixCard extends LitElement {
     this._previewSerial++;
   }
   updated(changed) {
+    if (!this.isConnected) return;
     // Apply selection after option children exist (including first render).
     for (const select of this.renderRoot.querySelectorAll("select")) {
       const selected = select.querySelector("option[selected]");
