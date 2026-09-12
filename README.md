@@ -4,6 +4,8 @@
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/tukies/iDotMatrix-HomeAssistant)](https://github.com/tukies/iDotMatrix-HomeAssistant/releases)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-yellow.svg)](https://buymeacoffee.com/tukie)
 
+[Changelog](CHANGELOG.md) · [Contributors](CONTRIBUTORS.md)
+
 A fully featured, modern Home Assistant integration for **iDotMatrix** pixel art displays. 
 
 Connects directly to your device via Bluetooth (native or proxy) without any cloud dependencies. Unlock the full potential of your display with advanced animations, typography controls, and "Party Mode" features.
@@ -366,7 +368,7 @@ with severity, and dim haze particles drift across when levels top 1000 ppm.
 ```yaml
 action: idotmatrix.show_co2
 data:
-  co2_entity: sensor.aranet4_19d46_carbon_dioxide
+  co2_entity: sensor.living_room_co2
 ```
 
 Updates are debounced by 30 seconds and skipped when the rounded ppm value
@@ -388,7 +390,7 @@ climbs. A white spark travels along the filled bar to suggest current flow.
 ```yaml
 action: idotmatrix.show_power
 data:
-  power_entity: sensor.shellypro3em_0cb815fd2f44_total_active_power
+  power_entity: sensor.home_power
 ```
 
 Because power sensors update near-continuously, updates are throttled to at
@@ -423,8 +425,8 @@ omitted to show a single centered panel.
 ```yaml
 action: idotmatrix.show_thermostat
 data:
-  heat_entity: climate.nest_learning_thermostat_4th_gen
-  cool_entity: climate.nest_thermostat
+  heat_entity: climate.heating
+  cool_entity: climate.cooling
 ```
 
 Reads the standard climate attributes (`hvac_action`, `current_temperature`,
@@ -611,5 +613,24 @@ This integration fully supports **ESPHome Bluetooth Proxies** and is the recomme
 
 <p align="center">
   Built with love by Tukies, based on great work of @derkalle4 who created python interface to communicate with iDotMatrix.<br>
-  GIF upload and BLE proxy support by @scarolan.
+  A big thank you to <a href="https://github.com/scarolan">Sean Carolan (@scarolan)</a> for contributing GIF uploads, BLE proxy improvements, animated dashboards, clocks, messages, and detailed setup documentation in <a href="https://github.com/tukies/iDotMatrix-HomeAssistant/pull/8">PR #8</a>.
 </p>
+
+
+## Maintenance controls and notifications
+
+Use the device's **Disconnect** button to release Bluetooth for the phone app. Dashboard tracking stops and integration writes remain suspended until you press **Reconnect**. Disabling or unloading the integration also releases its Bluetooth connection after active writes finish.
+
+For a fullscreen visual notification:
+
+```yaml
+action: idotmatrix.show_color
+data:
+  color: [255, 0, 0]
+```
+
+Send `[0, 0, 0]` for black, or select another display mode afterward. This uses the native fullscreen-color command.
+
+**Text Perfect Fit** temporarily enables multiline rendering. Turning it off restores your previous multiline setting. If updating from an older release with stuck multiline text, turn Perfect Fit off once to return to scrolling text.
+
+The Bluetooth client currently supports one active panel per Home Assistant instance. Address normalization and duplicate-entry checks protect repeated setup/discovery. Do not delete registry files to repair old duplicate devices; see the [historical issue audit](docs/ISSUE_AUDIT.md) for the remaining investigation.

@@ -4,9 +4,11 @@ from __future__ import annotations
 import logging
 import asyncio
 import re
+import math
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.core import HomeAssistant, Event, callback
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
@@ -74,6 +76,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name=DOMAIN,
+            config_entry=entry,
             update_interval=timedelta(seconds=60),
         )
         self.entry = entry
@@ -95,6 +98,13 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
         # interleaved chunks corrupt the device parser — observed as reboots
         # when switching to Photos while the device is busy.
         self._device_lock = asyncio.Lock()
+        self._mode_generation = 0
+        self._closing = False
+        self._suspended = False
+        self._image_mode_active = False
+        self._image_signature = None
+        self._device_tasks: set[asyncio.Task] = set()
+        self._refresh_tasks: set[asyncio.Task] = set()
 
         # True while the device runs the batch carousel: it ignores single
         # GIF uploads in that state (Feb 2026 finding), so the next single
@@ -276,7 +286,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
         entity_id = event.data.get("entity_id")
         _LOGGER.debug(f"[iDotMatrix] Entity {entity_id} changed, re-rendering face")
         # Schedule async update
-        self.hass.async_create_task(self.async_update_device())
+        self._schedule_refresh(self.async_update_device())
 
 
     async def _render_face(self, layers: list, screen_size: int) -> Image.Image:
@@ -666,9 +676,17 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self):
         """Fetch data from the device."""
-        return {"connected": True}
+        client = ConnectionManager().client
+        return {"connected": bool(client and client.is_connected)}
 
     async def async_update_device(self) -> None:
+        """Select legacy output and serialize its complete upload sequence."""
+        await self._stop_modes_for_message()
+        await self.async_stop_message_mode()
+        self._apply_face_tracking({"layers": self.text_settings.get("layers", [])})
+        return await self._device_call(self._async_update_device_locked)
+
+    async def _async_update_device_locked(self) -> None:
         """Send current configuration to the device."""
         text = self.text_settings.get("current_text", "")
         settings = self.text_settings
@@ -678,25 +696,16 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
              screen_size = int(settings.get("screen_size", 32))
              image = await self._render_face(settings.get("layers", []), screen_size)
              
-             # Save image in executor to avoid blocking
-             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-                tmp_path = tmp.name
-             
-             await self.hass.async_add_executor_job(image.save, tmp_path)
-             
-             try:
-                await IDMImage().setMode(1)
-                await IDMImage().uploadProcessed(tmp_path, pixel_size=screen_size)
-             finally:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-             
+             await self._upload_image(image, screen_size)
+
         elif text:
             # Render Text (Basic Mode)
             if settings.get("multiline", False):
                 await self._set_multiline_text(text, settings)
             else:
                 # Standard Scroller
+                self._image_mode_active = False
+                self._image_signature = None
                 await Text().setMode(
                     text=text,
                     font_size=int(settings.get("font_size", 10)), 
@@ -711,6 +720,8 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                     proportional=settings.get("proportional", True)
                 )
         else:
+            self._image_mode_active = False
+            self._image_signature = None
             # Render Clock (Default fallback)
             # Use self.text_settings for clock config
             # Retrieve color and format
@@ -736,8 +747,38 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
         # Save persistence
         await self.async_save_settings()
 
+    async def _upload_image(self, image, screen_size):
+        """Upload changed pixels without clearing DIY mode on every refresh."""
+        signature = (screen_size, image.tobytes())
+        if self._image_mode_active and signature == self._image_signature:
+            return True
+        def save():
+            fd, path = tempfile.mkstemp(suffix=".png")
+            with os.fdopen(fd, "wb") as handle:
+                image.save(handle, format="PNG")
+            return path
+        path = await self.hass.async_add_executor_job(save)
+        try:
+            if not self._image_mode_active:
+                if await IDMImage().setMode(1) is False:
+                    raise HomeAssistantError("Could not enter image mode")
+            if await IDMImage().uploadProcessed(path, pixel_size=screen_size) is False:
+                self._image_mode_active = False
+                raise HomeAssistantError("Image upload failed")
+            self._image_mode_active = True
+            self._image_signature = signature
+            return True
+        finally:
+            await self.hass.async_add_executor_job(os.remove, path)
+
     async def _set_multiline_text(self, text: str, settings: dict) -> None:
-        """Generate an image from text and upload it."""
+        image = await self.hass.async_add_executor_job(
+            self._render_multiline_image, text, dict(settings)
+        )
+        await self._upload_image(image, int(settings.get("screen_size", 32)))
+
+    def _render_multiline_image(self, text: str, settings: dict) -> Image.Image:
+        """Render multiline text synchronously for use in the executor."""
         screen_size = int(settings.get("screen_size", 32))
         font_name = settings.get("font")
         color = tuple(settings.get("color", (255, 0, 0)))
@@ -889,16 +930,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
         colored_text = Image.new("RGB", (screen_size, screen_size), color)
         final_image.paste(colored_text, mask=a)
         
-        image = final_image
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            image.save(tmp.name)
-            tmp_path = tmp.name
-        try:
-            await IDMImage().setMode(1)
-            await IDMImage().uploadProcessed(tmp_path, pixel_size=screen_size)
-        finally:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
+        return final_image
 
     async def async_display_gif(
         self,
@@ -911,8 +943,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
             path: Path to a single GIF file or a folder containing GIF files.
             rotation_interval: Carousel interval in seconds - how long each GIF
                                displays before advancing to the next (batch mode).
-                               Common values: 5, 10, 30, 60, 300. Defaults to 5.
+                               Common values: 5, 10, 30, 60, 255. Defaults to 5.
         """
+        self._clear_face_tracking()
         # Stop any existing rotation, weather, or ticker mode
         await self.async_stop_gif_rotation()
         await self.async_stop_weather_mode()
@@ -925,6 +958,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
         await self.async_stop_clock_mode()
         await self.async_stop_message_mode()
 
+        generation = self._mode_generation
+        self._image_mode_active = False
+        self._image_signature = None
         self._gif_cfg = {"path": path, "rotation_interval": rotation_interval}
 
         screen_size = int(self.text_settings.get("screen_size", 32))
@@ -953,16 +989,16 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                     self._carousel_active = False
                 return ok
 
-            success = await self._device_call(_reset_and_upload_single)
+            success = await self._device_call(_reset_and_upload_single, generation=generation)
             if not success:
-                _LOGGER.error(f"Single GIF upload failed: {path}")
+                raise HomeAssistantError(f"Single GIF upload failed: {path}")
         elif is_dir:
             # Folder mode - find all GIF files (in executor to avoid blocking)
             def find_gifs(folder):
                 files = [
                     os.path.join(folder, f)
                     for f in os.listdir(folder)
-                    if f.lower().endswith(".gif")
+                    if f.lower().endswith(".gif") and os.path.isfile(os.path.join(folder, f))
                 ]
                 random.shuffle(files)
                 return files
@@ -970,8 +1006,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
             gif_files = await self.hass.async_add_executor_job(find_gifs, path)
 
             if not gif_files:
-                _LOGGER.warning(f"No GIF files found in {path}")
-                return
+                raise HomeAssistantError(f"No GIF files found in {path}")
 
             # Batch upload (works for 1 or many)
             batch = gif_files[:12]
@@ -986,6 +1021,8 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
             # _carousel_active stays True, so the next single upload sends
             # the reset first and clears the partial stream.
             async with self._device_lock:
+                if self._closing or self._suspended or generation != self._mode_generation:
+                    raise HomeAssistantError("Display mode changed or device disconnected")
                 # Reset first (packets found by 8none1): clears any wedged
                 # upload/parser state left by a previously aborted stream.
                 await Common().reset()
@@ -997,11 +1034,11 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                     batch, pixel_size=screen_size, interval=interval, raw=True
                 )
             if not success:
-                _LOGGER.error("Batch GIF upload failed")
+                raise HomeAssistantError("Batch GIF upload failed")
         else:
-            _LOGGER.error(f"Path does not exist: {path}")
+            raise HomeAssistantError(f"Path does not exist: {path}")
 
-    async def _upload_single(self, gif_bytes: bytes) -> bool:
+    async def _upload_single(self, gif_bytes: bytes, generation: int | None = None) -> bool:
         """Upload a single rendered GIF, escaping the device's carousel mode
         first if it's running (the device ignores single uploads
         mid-carousel; the 8none1 reset verifiably drops it back to idle).
@@ -1010,6 +1047,8 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
         caller is cancelled while waiting for the device lock, an outer
         finally must not delete the file before the upload reads it."""
         async def run():
+            self._image_mode_active = False
+            self._image_signature = None
             def write_tmp() -> str:
                 fd, path = tempfile.mkstemp(suffix=".gif")
                 with os.fdopen(fd, "wb") as fh:
@@ -1027,24 +1066,100 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                 return ok
             finally:
                 await self.hass.async_add_executor_job(os.remove, tmp_path)
-        return await self._device_call(run)
+        return await self._device_call(run, generation=generation)
 
-    async def _device_call(self, fn, *args):
-        """Run a device write sequence under the device lock, shielded from
-        task cancellation.
+    async def _device_call(self, fn, *args, generation=None, **kwargs):
+        """Finish an active write before propagating cancellation to its caller."""
+        if generation is None:
+            generation = self._mode_generation
+        task = asyncio.create_task(
+            self._device_call_locked(fn, *args, generation=generation, **kwargs)
+        )
+        self._device_tasks.add(task)
+        task.add_done_callback(self._device_tasks.discard)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # Retain ownership of the shielded operation. In particular, unload
+            # must not return while a transfer still owns a temporary file.
+            try:
+                await asyncio.shield(task)
+            except Exception:
+                _LOGGER.exception("Device operation failed during cancellation")
+            raise
 
-        A restarted automation/script cancels the service call it was
-        running; aborting an upload mid-stream leaves the device parser
-        waiting for the rest of the file, and the next upload's bytes get
-        consumed as bogus continuation data (wedged parser / reboot).
-        Shielding lets an upload that has started always run to completion
-        while the caller still sees the cancellation.
-        """
-        return await asyncio.shield(self._device_call_locked(fn, *args))
-
-    async def _device_call_locked(self, fn, *args):
+    async def _device_call_locked(self, fn, *args, generation=None, **kwargs):
         async with self._device_lock:
-            return await fn(*args)
+            if self._closing or generation != self._mode_generation:
+                return False
+            if self._suspended:
+                raise HomeAssistantError("Device disconnected; press Reconnect before sending updates")
+            return await fn(*args, **kwargs)
+
+    def _schedule_refresh(self, coroutine):
+        """Own refresh tasks and discard callbacks from an earlier mode."""
+        generation = self._mode_generation
+        async def run():
+            if self._closing or generation != self._mode_generation:
+                coroutine.close()
+                return
+            await coroutine
+        task = self.hass.async_create_task(run())
+        self._refresh_tasks.add(task)
+        def completed(task):
+            self._refresh_tasks.discard(task)
+            coroutine.close()
+        task.add_done_callback(completed)
+        return task
+
+    async def async_disconnect_device(self):
+        """Release Bluetooth so another app can connect, without reconnecting."""
+        self._suspended = True
+        self._image_mode_active = False
+        self._image_signature = None
+        self._carousel_active = True
+        await self._stop_modes_for_message()
+        await self.async_stop_message_mode()
+        async with self._device_lock:
+            await ConnectionManager().disconnect()
+        self.async_set_updated_data({"connected": False})
+
+    async def async_reconnect_device(self):
+        """Resume user-requested writes after an explicit disconnect."""
+        self._suspended = False
+        await self._device_call(ConnectionManager().connect)
+        client = ConnectionManager().client
+        if not client or not client.is_connected:
+            raise HomeAssistantError("Device unavailable; check its power and Bluetooth range")
+        self.async_set_updated_data({"connected": True})
+
+    async def async_show_color(self, color):
+        """Select a solid fullscreen color for visual notifications."""
+        await self._stop_modes_for_message()
+        await self.async_stop_message_mode()
+        self._image_mode_active = False
+        self._image_signature = None
+        result = await self._device_call(FullscreenColor().setMode, *color)
+        if result is False:
+            raise HomeAssistantError("Could not display fullscreen color")
+        return True
+
+    async def async_shutdown(self):
+        """Invalidate pending renders and finish active transfers before unload."""
+        self._closing = True
+        await super().async_shutdown()
+        self._clear_face_tracking()
+        await self._stop_modes_for_message()
+        await self.async_stop_message_mode()
+        refreshes = tuple(self._refresh_tasks)
+        for task in refreshes:
+            task.cancel()
+        if refreshes:
+            await asyncio.gather(*refreshes, return_exceptions=True)
+        if self._device_tasks:
+            await asyncio.gather(*tuple(self._device_tasks), return_exceptions=True)
+        async with self._device_lock:
+            await ConnectionManager().disconnect()
 
     async def _upload_gif(self, file_path: str, pixel_size: int) -> bool:
         """Upload a single GIF to the device with retry logic."""
@@ -1150,6 +1265,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
 
     async def async_stop_gif_rotation(self) -> None:
         """Stop the current GIF rotation if running."""
+        self._mode_generation += 1
         self._gif_cfg = None
         if self._gif_rotation_task is not None:
             self._gif_rotation_stop.set()
@@ -1173,7 +1289,8 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
         if not state or state.state in ("unknown", "unavailable", "", None):
             return None
         try:
-            return float(state.state)
+            value = float(state.state)
+            return value if math.isfinite(value) else None
         except (ValueError, TypeError):
             return None
 
@@ -1190,7 +1307,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
         def num(key):
             v = attrs.get(key)
             try:
-                return None if v is None else float(v)
+                return float(v) if v is not None and math.isfinite(float(v)) else None
             except (ValueError, TypeError):
                 return None
 
@@ -1293,6 +1410,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
 
     async def async_show_weather(self, cfg: dict, force: bool = False) -> bool:
         """Render the weather dashboard GIF and upload it to the device."""
+        generation = self._mode_generation
+        if self._closing or (not force and self._weather_cfg is not cfg):
+            return False
         async with self._weather_lock:
             data = await self._get_weather_data(cfg)
             if data is None:
@@ -1312,7 +1432,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                 render_weather_gif, data, size
             )
 
-            success = await self._upload_single(gif_bytes)
+            success = await self._upload_single(gif_bytes, generation)
+            if generation != self._mode_generation:
+                return False
 
             if success:
                 self._weather_signature = signature
@@ -1326,6 +1448,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
 
     async def async_start_weather_mode(self, cfg: dict) -> None:
         """Show the weather dashboard and keep it updated automatically."""
+        self._clear_face_tracking()
         await self.async_stop_gif_rotation()
         await self.async_stop_weather_mode()
         await self.async_stop_bitcoin_mode()
@@ -1368,7 +1491,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                 self.hass, self._on_weather_timer, timedelta(minutes=15)
             )
         )
-        await self.async_show_weather(cfg, force=True)
+        return await self.async_show_weather(cfg, force=True)
 
     @callback
     def _on_weather_state_change(self, event: Event) -> None:
@@ -1383,15 +1506,16 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     def _weather_debounced_refresh(self, _now) -> None:
         self._weather_debounce_unsub = None
         if self._weather_cfg:
-            self.hass.async_create_task(self.async_show_weather(self._weather_cfg))
+            self._schedule_refresh(self.async_show_weather(self._weather_cfg))
 
     @callback
     def _on_weather_timer(self, _now) -> None:
         if self._weather_cfg:
-            self.hass.async_create_task(self.async_show_weather(self._weather_cfg))
+            self._schedule_refresh(self.async_show_weather(self._weather_cfg))
 
     async def async_stop_weather_mode(self) -> None:
         """Stop weather mode tracking."""
+        self._mode_generation += 1
         if self._weather_debounce_unsub:
             self._weather_debounce_unsub()
             self._weather_debounce_unsub = None
@@ -1409,6 +1533,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
 
     async def async_show_bitcoin(self, cfg: dict, force: bool = False) -> bool:
         """Render the Bitcoin ticker GIF and upload it to the device."""
+        generation = self._mode_generation
+        if self._closing or (not force and self._btc_cfg is not cfg):
+            return False
         async with self._btc_lock:
             price = self._read_float_state(cfg.get("price_entity"))
             if price is None:
@@ -1440,7 +1567,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                 render_bitcoin_gif, data, size
             )
 
-            success = await self._upload_single(gif_bytes)
+            success = await self._upload_single(gif_bytes, generation)
+            if generation != self._mode_generation:
+                return False
 
             if success:
                 self._btc_signature = signature
@@ -1455,6 +1584,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
 
     async def async_start_bitcoin_mode(self, cfg: dict) -> None:
         """Show the Bitcoin ticker and keep it updated automatically."""
+        self._clear_face_tracking()
         await self.async_stop_gif_rotation()
         await self.async_stop_weather_mode()
         await self.async_stop_bitcoin_mode()
@@ -1477,7 +1607,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                     self.hass, entities, self._on_btc_state_change
                 )
             )
-        await self.async_show_bitcoin(cfg, force=True)
+        return await self.async_show_bitcoin(cfg, force=True)
 
     @callback
     def _on_btc_state_change(self, event: Event) -> None:
@@ -1492,10 +1622,11 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     def _btc_debounced_refresh(self, _now) -> None:
         self._btc_debounce_unsub = None
         if self._btc_cfg:
-            self.hass.async_create_task(self.async_show_bitcoin(self._btc_cfg))
+            self._schedule_refresh(self.async_show_bitcoin(self._btc_cfg))
 
     async def async_stop_bitcoin_mode(self) -> None:
         """Stop Bitcoin ticker tracking."""
+        self._mode_generation += 1
         if self._btc_debounce_unsub:
             self._btc_debounce_unsub()
             self._btc_debounce_unsub = None
@@ -1513,6 +1644,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
 
     async def async_show_co2(self, cfg: dict, force: bool = False) -> bool:
         """Render the CO2 gauge GIF and upload it to the device."""
+        generation = self._mode_generation
+        if self._closing or (not force and self._co2_cfg is not cfg):
+            return False
         async with self._co2_lock:
             ppm = self._read_float_state(cfg.get("co2_entity"))
             if ppm is None:
@@ -1533,7 +1667,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                 render_co2_gif, data, size
             )
 
-            success = await self._upload_single(gif_bytes)
+            success = await self._upload_single(gif_bytes, generation)
+            if generation != self._mode_generation:
+                return False
 
             if success:
                 self._co2_signature = signature
@@ -1547,6 +1683,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
 
     async def async_start_co2_mode(self, cfg: dict) -> None:
         """Show the CO2 gauge and keep it updated automatically."""
+        self._clear_face_tracking()
         await self.async_stop_gif_rotation()
         await self.async_stop_weather_mode()
         await self.async_stop_bitcoin_mode()
@@ -1567,7 +1704,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                     self.hass, entities, self._on_co2_state_change
                 )
             )
-        await self.async_show_co2(cfg, force=True)
+        return await self.async_show_co2(cfg, force=True)
 
     @callback
     def _on_co2_state_change(self, event: Event) -> None:
@@ -1581,10 +1718,11 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     def _co2_debounced_refresh(self, _now) -> None:
         self._co2_debounce_unsub = None
         if self._co2_cfg:
-            self.hass.async_create_task(self.async_show_co2(self._co2_cfg))
+            self._schedule_refresh(self.async_show_co2(self._co2_cfg))
 
     async def async_stop_co2_mode(self) -> None:
         """Stop CO2 gauge tracking."""
+        self._mode_generation += 1
         if self._co2_debounce_unsub:
             self._co2_debounce_unsub()
             self._co2_debounce_unsub = None
@@ -1602,6 +1740,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
 
     async def async_show_power(self, cfg: dict, force: bool = False) -> bool:
         """Render the power gauge GIF and upload it to the device."""
+        generation = self._mode_generation
+        if self._closing or (not force and self._power_cfg is not cfg):
+            return False
         async with self._power_lock:
             watts = self._read_float_state(cfg.get("power_entity"))
             if watts is None:
@@ -1628,7 +1769,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                 render_power_gif, data, size
             )
 
-            success = await self._upload_single(gif_bytes)
+            success = await self._upload_single(gif_bytes, generation)
+            if generation != self._mode_generation:
+                return False
 
             if success:
                 self._power_signature = signature
@@ -1642,6 +1785,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
 
     async def async_start_power_mode(self, cfg: dict) -> None:
         """Show the power gauge and keep it updated automatically."""
+        self._clear_face_tracking()
         await self.async_stop_gif_rotation()
         await self.async_stop_weather_mode()
         await self.async_stop_bitcoin_mode()
@@ -1665,7 +1809,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                     self.hass, entities, self._on_power_state_change
                 )
             )
-        await self.async_show_power(cfg, force=True)
+        return await self.async_show_power(cfg, force=True)
 
     @callback
     def _on_power_state_change(self, event: Event) -> None:
@@ -1681,10 +1825,11 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     def _power_throttled_refresh(self, _now) -> None:
         self._power_throttle_unsub = None
         if self._power_cfg:
-            self.hass.async_create_task(self.async_show_power(self._power_cfg))
+            self._schedule_refresh(self.async_show_power(self._power_cfg))
 
     async def async_stop_power_mode(self) -> None:
         """Stop power gauge tracking."""
+        self._mode_generation += 1
         if self._power_throttle_unsub:
             self._power_throttle_unsub()
             self._power_throttle_unsub = None
@@ -1703,6 +1848,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     async def async_show_thermostat(self, cfg: dict,
                                     force: bool = False) -> bool:
         """Render the thermostat status GIF and upload it to the device."""
+        generation = self._mode_generation
+        if self._closing or (not force and self._thermostat_cfg is not cfg):
+            return False
         async with self._thermostat_lock:
             heat = self._read_climate_zone(cfg.get("heat_entity"), "heat")
             cool = self._read_climate_zone(cfg.get("cool_entity"), "cool")
@@ -1724,7 +1872,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                 render_thermostat_gif, data, size
             )
 
-            success = await self._upload_single(gif_bytes)
+            success = await self._upload_single(gif_bytes, generation)
+            if generation != self._mode_generation:
+                return False
 
             if success:
                 self._thermostat_signature = signature
@@ -1737,6 +1887,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
 
     async def async_start_thermostat_mode(self, cfg: dict) -> None:
         """Show the thermostat status and keep it updated automatically."""
+        self._clear_face_tracking()
         await self.async_stop_gif_rotation()
         await self.async_stop_weather_mode()
         await self.async_stop_bitcoin_mode()
@@ -1759,7 +1910,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                     self.hass, entities, self._on_thermostat_state_change
                 )
             )
-        await self.async_show_thermostat(cfg, force=True)
+        return await self.async_show_thermostat(cfg, force=True)
 
     @callback
     def _on_thermostat_state_change(self, event: Event) -> None:
@@ -1775,12 +1926,13 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     def _thermostat_debounced_refresh(self, _now) -> None:
         self._thermostat_debounce_unsub = None
         if self._thermostat_cfg:
-            self.hass.async_create_task(
+            self._schedule_refresh(
                 self.async_show_thermostat(self._thermostat_cfg)
             )
 
     async def async_stop_thermostat_mode(self) -> None:
         """Stop thermostat tracking."""
+        self._mode_generation += 1
         if self._thermostat_debounce_unsub:
             self._thermostat_debounce_unsub()
             self._thermostat_debounce_unsub = None
@@ -1853,6 +2005,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
 
     async def async_show_sun(self, cfg: dict, force: bool = False) -> bool:
         """Render the sun arc GIF and upload it to the device."""
+        generation = self._mode_generation
+        if self._closing or (not force and self._sun_cfg is not cfg):
+            return False
         async with self._sun_lock:
             data = self._build_sun_data(cfg)
             if data is None:
@@ -1872,7 +2027,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                 render_sun_gif, data, size
             )
 
-            success = await self._upload_single(gif_bytes)
+            success = await self._upload_single(gif_bytes, generation)
+            if generation != self._mode_generation:
+                return False
 
             if success:
                 self._sun_signature = signature
@@ -1886,6 +2043,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
 
     async def async_start_sun_mode(self, cfg: dict) -> None:
         """Show the sun arc and keep it updated every minute."""
+        self._clear_face_tracking()
         await self.async_stop_gif_rotation()
         await self.async_stop_weather_mode()
         await self.async_stop_bitcoin_mode()
@@ -1903,15 +2061,16 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
         self._sun_unsub = async_track_time_change(
             self.hass, self._on_sun_minute, second=0
         )
-        await self.async_show_sun(cfg, force=True)
+        return await self.async_show_sun(cfg, force=True)
 
     @callback
     def _on_sun_minute(self, _now) -> None:
         if self._sun_cfg:
-            self.hass.async_create_task(self.async_show_sun(self._sun_cfg))
+            self._schedule_refresh(self.async_show_sun(self._sun_cfg))
 
     async def async_stop_sun_mode(self) -> None:
         """Stop sun arc tracking."""
+        self._mode_generation += 1
         if self._sun_unsub:
             self._sun_unsub()
             self._sun_unsub = None
@@ -1926,6 +2085,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
 
     async def async_show_moon(self, cfg: dict, force: bool = False) -> bool:
         """Render the moon phase GIF and upload it to the device."""
+        generation = self._mode_generation
+        if self._closing or (not force and self._moon_cfg is not cfg):
+            return False
         async with self._moon_lock:
             south = (self.hass.config.latitude or 0) < 0
             data = MoonData(age=moon_age(dt_util.utcnow()), south=south)
@@ -1939,7 +2101,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                 render_moon_gif, data, size
             )
 
-            success = await self._upload_single(gif_bytes)
+            success = await self._upload_single(gif_bytes, generation)
+            if generation != self._mode_generation:
+                return False
 
             if success:
                 self._moon_signature = signature
@@ -1953,6 +2117,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
 
     async def async_start_moon_mode(self, cfg: dict) -> None:
         """Show the moon phase and refresh it hourly."""
+        self._clear_face_tracking()
         await self.async_stop_gif_rotation()
         await self.async_stop_weather_mode()
         await self.async_stop_bitcoin_mode()
@@ -1970,15 +2135,16 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
         self._moon_unsub = async_track_time_change(
             self.hass, self._on_moon_hour, minute=0, second=30
         )
-        await self.async_show_moon(cfg, force=True)
+        return await self.async_show_moon(cfg, force=True)
 
     @callback
     def _on_moon_hour(self, _now) -> None:
         if self._moon_cfg:
-            self.hass.async_create_task(self.async_show_moon(self._moon_cfg))
+            self._schedule_refresh(self.async_show_moon(self._moon_cfg))
 
     async def async_stop_moon_mode(self) -> None:
         """Stop moon phase tracking."""
+        self._mode_generation += 1
         if self._moon_unsub:
             self._moon_unsub()
             self._moon_unsub = None
@@ -2028,6 +2194,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
 
     async def _stop_modes_for_message(self) -> None:
         """Stop every display mode except the message itself."""
+        self._clear_face_tracking()
         await self.async_stop_gif_rotation()
         await self.async_stop_weather_mode()
         await self.async_stop_bitcoin_mode()
@@ -2053,6 +2220,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
             self._message_prev = None
 
             await self._stop_modes_for_message()
+            generation = self._mode_generation
 
             spec = MessageSpec(
                 text=str(cfg.get("message") or ""),
@@ -2067,17 +2235,21 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                 render_message_gif, spec, size
             )
 
+            if generation != self._mode_generation or self._closing:
+                return False
+
             if not self.text_settings.get("is_on", True):
                 # Wake a darkened panel so the message is actually seen
                 try:
-                    async with self._device_lock:
-                        await Common().screenOn()
+                    await self._device_call(Common().screenOn, generation=generation)
                     self.text_settings["is_on"] = True
                     woke = True
                 except Exception as err:  # noqa: BLE001
                     _LOGGER.warning(f"Could not wake screen for message: {err}")
 
-            success = await self._upload_single(gif_bytes)
+            success = await self._upload_single(gif_bytes, generation)
+            if generation != self._mode_generation:
+                return False
             if not success:
                 _LOGGER.error("Message upload failed")
                 if prev:
@@ -2101,7 +2273,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     @callback
     def _on_message_expired(self, _now) -> None:
         self._message_unsub = None
-        self.hass.async_create_task(self.async_end_message())
+        self._schedule_refresh(self.async_end_message())
 
     async def async_end_message(self) -> None:
         """End the current message and bring back what was showing."""
@@ -2113,14 +2285,14 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
             await self._restore_mode(prev)
         if woke:
             try:
-                async with self._device_lock:
-                    await Common().screenOff()
+                await self._device_call(Common().screenOff)
                 self.text_settings["is_on"] = False
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning(f"Could not darken screen after message: {err}")
 
     async def async_stop_message_mode(self) -> None:
         """Forget the current message without restoring anything."""
+        self._mode_generation += 1
         if self._message_unsub:
             self._message_unsub()
             self._message_unsub = None
@@ -2144,6 +2316,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
 
     async def async_show_clock(self, cfg: dict, force: bool = False) -> bool:
         """Show the clock: custom 'pixel' face or a native device style."""
+        generation = self._mode_generation
+        if self._closing or (not force and self._clock_cfg is not cfg):
+            return False
         async with self._clock_lock:
             face = cfg.get("face", "pixel")
             now = dt_util.now()
@@ -2152,6 +2327,8 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                 # Native firmware clock: sync time, then set the style.
                 # The device renders and updates it on its own after this.
                 async def _sync_and_set_clock():
+                    self._image_mode_active = False
+                    self._image_signature = None
                     await Common().setTime(
                         now.year, now.month, now.day,
                         now.hour, now.minute, now.second,
@@ -2164,7 +2341,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                         r=r, g=g, b=b,
                     )
 
-                result = await self._device_call(_sync_and_set_clock)
+                result = await self._device_call(_sync_and_set_clock, generation=generation)
                 if result is False:
                     _LOGGER.error(
                         "Clock mode: could not set native style %s "
@@ -2194,7 +2371,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                 render, data, size, self._clock_color(cfg)
             )
 
-            success = await self._upload_single(gif_bytes)
+            success = await self._upload_single(gif_bytes, generation)
+            if generation != self._mode_generation:
+                return False
 
             if success:
                 self._clock_signature = signature
@@ -2208,6 +2387,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
 
     async def async_start_clock_mode(self, cfg: dict) -> None:
         """Show the clock and keep the pixel face updated every minute."""
+        self._clear_face_tracking()
         await self.async_stop_gif_rotation()
         await self.async_stop_weather_mode()
         await self.async_stop_bitcoin_mode()
@@ -2226,15 +2406,16 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
             self._clock_unsub = async_track_time_change(
                 self.hass, self._on_clock_minute, second=0
             )
-        await self.async_show_clock(cfg, force=True)
+        return await self.async_show_clock(cfg, force=True)
 
     @callback
     def _on_clock_minute(self, _now) -> None:
         if self._clock_cfg:
-            self.hass.async_create_task(self.async_show_clock(self._clock_cfg))
+            self._schedule_refresh(self.async_show_clock(self._clock_cfg))
 
     async def async_stop_clock_mode(self) -> None:
         """Stop clock tracking."""
+        self._mode_generation += 1
         if self._clock_unsub:
             self._clock_unsub()
             self._clock_unsub = None

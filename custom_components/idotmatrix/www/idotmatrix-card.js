@@ -5,7 +5,7 @@ import {
 } from "https://unpkg.com/lit-element@3.3.3/lit-element.js?module";
 
 console.info(
-  "%c iDotMatrix Card %c v0.3.0 ",
+  "%c iDotMatrix Card %c v1.3.0 ",
   "color: white; background: #333; font-weight: bold;",
   "color: white; background: #03a9f4; font-weight: bold;"
 );
@@ -508,7 +508,7 @@ class IDotMatrixCard extends LitElement {
                     <option value="10">10s</option>
                     <option value="30">30s</option>
                     <option value="60">1 min</option>
-                    <option value="300">5 min</option>
+                    <option value="255">4 min 15s</option>
                   </select>
                 </label>
                 <mwc-button raised @click=${this._sendGif}>

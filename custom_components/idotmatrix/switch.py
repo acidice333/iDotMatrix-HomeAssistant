@@ -40,22 +40,19 @@ class IDotMatrixAutosize(IDotMatrixEntity, SwitchEntity):
         return self.coordinator.text_settings.get("autosize", False)
 
     async def async_turn_on(self, **kwargs) -> None:
-        self.coordinator.text_settings["autosize"] = True
-        # If multiline is not on, maybe we should turn it on? 
-        # Autosize implies fitting text to screen, which usually requires wrapping.
-        # But let's respect the user's explicit multiline choice or assume autosize enforces a fit strategy.
-        # For now, just setting the flag. The coordinator will use it.
-        # Ideally, Perfect Fit should probably imply Multiline mode or at least standard text scaling.
-        # Let's force multiline ON if Autosize is turned ON, as autosizing single line scroller is less common/useful?
-        # User said "resize text perfectly to the screen", usually means static display. Scrollers don't need resizing to fit.
-        if not self.coordinator.text_settings.get("multiline"):
-             self.coordinator.text_settings["multiline"] = True
-             
+        settings = self.coordinator.text_settings
+        if not settings.get("autosize", False):
+            settings["autosize_previous_multiline"] = settings.get("multiline", False)
+        settings["autosize"] = True
+        settings["multiline"] = True
+
         await self.coordinator.async_update_device()
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs) -> None:
-        self.coordinator.text_settings["autosize"] = False
+        settings = self.coordinator.text_settings
+        settings["autosize"] = False
+        settings["multiline"] = settings.pop("autosize_previous_multiline", False)
         await self.coordinator.async_update_device()
         self.async_write_ha_state()
 
@@ -83,7 +80,11 @@ class IDotMatrixClockDate(IDotMatrixEntity, SwitchEntity):
         h24 = s.get("clock_format", "24h") == "24h"
         
         from .client.modules.clock import Clock
-        await Clock().setMode(style, True, h24, color[0], color[1], color[2])
+        await self.coordinator._stop_modes_for_message()
+        await self.coordinator.async_stop_message_mode()
+        self.coordinator._image_mode_active = False
+        self.coordinator._image_signature = None
+        await self.coordinator._device_call(Clock().setMode, style, True, h24, *color)
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs) -> None:
@@ -95,7 +96,11 @@ class IDotMatrixClockDate(IDotMatrixEntity, SwitchEntity):
         h24 = s.get("clock_format", "24h") == "24h"
         
         from .client.modules.clock import Clock
-        await Clock().setMode(style, False, h24, color[0], color[1], color[2])
+        await self.coordinator._stop_modes_for_message()
+        await self.coordinator.async_stop_message_mode()
+        self.coordinator._image_mode_active = False
+        self.coordinator._image_signature = None
+        await self.coordinator._device_call(Clock().setMode, style, False, h24, *color)
         self.async_write_ha_state()
 
 class IDotMatrixTextProportional(IDotMatrixEntity, SwitchEntity):

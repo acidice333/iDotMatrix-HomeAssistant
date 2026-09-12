@@ -65,7 +65,7 @@ display_gif:
         text:
     rotation_interval:
       required: false
-      description: Carousel interval - how long each GIF displays before advancing to the next (batch mode only). The device handles the rotation natively. Common values are 5, 10, 30, 60, or 300 seconds.
+      description: Carousel interval - how long each GIF displays before advancing to the next (batch mode only). The device handles the rotation natively. Common values are 5, 10, 30, 60, or 255 seconds.
       default: 5
       example: 10
       selector:
@@ -205,10 +205,10 @@ show_co2:
     the sensor value changes.
   fields:
     co2_entity:
+      required: true
       required: false
       description: Sensor with the current CO2 concentration in ppm.
-      default: sensor.aranet4_19d46_carbon_dioxide
-      example: sensor.aranet4_19d46_carbon_dioxide
+      example: sensor.living_room_co2
       selector:
         entity:
           domain: sensor
@@ -242,24 +242,22 @@ show_power:
     running so a spike explains itself.
   fields:
     power_entity:
+      required: true
       required: false
       description: Sensor with the current total active power in watts.
-      default: sensor.shellypro3em_0cb815fd2f44_total_active_power
-      example: sensor.shellypro3em_0cb815fd2f44_total_active_power
+      example: sensor.home_power
       selector:
         entity:
           domain: sensor
     heat_entity:
       required: false
       description: Heating thermostat; when it reports heating, the caption shows a flame and "HEAT ON".
-      default: climate.nest_learning_thermostat_4th_gen
       selector:
         entity:
           domain: climate
     cool_entity:
       required: false
       description: Cooling thermostat; when it reports cooling, the caption shows a snowflake and "AC ON".
-      default: climate.nest_thermostat
       selector:
         entity:
           domain: climate
@@ -294,14 +292,12 @@ show_thermostat:
     heat_entity:
       required: false
       description: Climate entity for the heating zone (top panel).
-      default: climate.nest_learning_thermostat_4th_gen
       selector:
         entity:
           domain: climate
     cool_entity:
       required: false
       description: Climate entity for the cooling zone (bottom panel).
-      default: climate.nest_thermostat
       selector:
         entity:
           domain: climate
@@ -559,3 +555,13 @@ show_clock:
 stop_clock:
   name: Stop clock
   description: Stop clock updates (pixel face) and clock mode tracking.
+
+show_color:
+  name: Show fullscreen color
+  description: Replace the active display with a solid color for a visual notification. Use black to clear the panel.
+  fields:
+    color:
+      required: true
+      example: [255, 0, 0]
+      selector:
+        color_rgb:

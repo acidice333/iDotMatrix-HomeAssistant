@@ -117,6 +117,7 @@ class ConnectionManager(metaclass=SingletonMeta):
         if self.client and self.client.is_connected:
             await self.client.disconnect()
             self.logging.info(f"disconnected from {self.address}")
+        self.client = None
 
     # Match the Android app's BLE write size (MTU 517 - ATT overhead = 509)
     BLE_WRITE_SIZE = 509
@@ -148,6 +149,8 @@ class ConnectionManager(metaclass=SingletonMeta):
                 if not (self.client and self.client.is_connected):
                     raise
                 return await self._write_chunks(data, response, {"writes": 0})
+
+        raise ConnectionError("iDotMatrix is not connected")
 
     async def _write_chunks(self, data, response, progress):
         # Cap chunk size to real BLE MTU regardless of proxy-reported size.

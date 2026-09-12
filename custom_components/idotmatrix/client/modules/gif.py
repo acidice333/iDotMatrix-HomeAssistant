@@ -140,7 +140,7 @@ class Gif:
                 for chunk in data:
                     await self.conn.send(data=chunk)
             return data
-        except BaseException as error:
+        except Exception as error:
             self.logging.error(f"could not upload gif unprocessed: {error}")
             return False
 
@@ -192,7 +192,7 @@ class Gif:
                 )
                 gif_buffer.seek(0)
                 return self._createPayloads(gif_buffer.getvalue(), index=index, interval=interval)
-        except BaseException as error:
+        except Exception as error:
             self.logging.error(f"could not process gif: {error}")
             return False
 
@@ -228,7 +228,7 @@ class Gif:
                         return False
                 self.logging.debug(f"GIF upload complete: {len(data)} chunks sent")
             return data
-        except BaseException as error:
+        except Exception as error:
             self.logging.error(f"could not upload gif processed: {error}")
             return False
 
@@ -268,7 +268,7 @@ class Gif:
             self.logging.debug(f"Single GIF upload complete: {len(data)} chunks, {len(gif_data)} bytes")
             return True
 
-        except BaseException as error:
+        except Exception as error:
             self.logging.error(f"Single GIF upload failed: {error}")
             return False
 
@@ -307,7 +307,8 @@ class Gif:
 
             # 1. Send batch mode enable: 04 00 0a 01
             batch_enable = bytearray([0x04, 0x00, 0x0a, 0x01])
-            await self.conn.send(data=batch_enable)
+            if not await self.conn.send(data=batch_enable):
+                return False
             # Brief pause for device to process command
             await asyncio.sleep(0.1)
 
@@ -317,7 +318,8 @@ class Gif:
             batch_header.extend(range(count))
             batch_header[0] = len(batch_header) & 0xFF
             batch_header[1] = (len(batch_header) >> 8) & 0xFF
-            await self.conn.send(data=batch_header)
+            if not await self.conn.send(data=batch_header):
+                return False
             await asyncio.sleep(0.1)
 
             # 3. Process and stream all GIFs with BLE-paced writes
@@ -349,6 +351,6 @@ class Gif:
             self.logging.debug(f"Batch upload complete: {count} GIFs, interval={interval}s")
             return True
 
-        except BaseException as error:
+        except Exception as error:
             self.logging.error(f"Batch upload failed: {error}")
             return False
