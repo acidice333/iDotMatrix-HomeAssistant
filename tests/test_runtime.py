@@ -1,0 +1,277 @@
+"""Exercise the real coordinator against Home Assistant with simulated BLE."""
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
+
+import pytest
+from homeassistant.core import HomeAssistant
+
+from custom_components.idotmatrix import coordinator as module
+from custom_components.idotmatrix.client.modules.gif import Gif
+from custom_components.idotmatrix.coordinator import IDotMatrixCoordinator
+from custom_components.idotmatrix.weather import WeatherData
+
+
+@pytest.fixture
+async def coordinator(tmp_path):
+    hass = HomeAssistant(str(tmp_path))
+    entry = SimpleNamespace(options={}, entry_id="test", data={}, async_on_unload=Mock())
+    c = IDotMatrixCoordinator(hass, entry)
+    yield c
+    await c.async_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stopped_render_cannot_replace_new_display(coordinator, monkeypatch):
+    c = coordinator
+    started, release = asyncio.Event(), asyncio.Event()
+    real_executor = c.hass.async_add_executor_job
+    async def executor(fn, *args):
+        if fn is module.render_weather_gif:
+            started.set()
+            await release.wait()
+            return b"GIF89a"
+        return await real_executor(fn, *args)
+    monkeypatch.setattr(c.hass, "async_add_executor_job", executor)
+    c._get_weather_data = AsyncMock(return_value=WeatherData("sunny", 20))
+    c._weather_cfg = {"weather_entity": "weather.test"}
+    upload = AsyncMock(return_value=True)
+    monkeypatch.setattr(module.IDMGif, "uploadSingleRaw", upload)
+    c._carousel_active = False
+    task = asyncio.create_task(c.async_show_weather(c._weather_cfg))
+    await started.wait()
+    await c.async_stop_weather_mode()
+    await c._device_call(AsyncMock(return_value=True))
+    release.set()
+    assert await task is False
+    upload.assert_not_awaited()
+    assert c._weather_signature is None
+
+
+@pytest.mark.asyncio
+async def test_refresh_scheduled_before_stop_does_not_start(coordinator):
+    c = coordinator
+    cfg = {"weather_entity": "weather.test"}
+    c._weather_cfg = cfg
+    c._get_weather_data = AsyncMock()
+    task = asyncio.create_task(c.async_show_weather(cfg))
+    await c.async_stop_weather_mode()
+    assert await task is False
+    c._get_weather_data.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_legacy_text_waits_for_whole_upload(coordinator, monkeypatch):
+    c = coordinator
+    c.text_settings["current_text"] = "Hello"
+    c.display_mode = "text"
+    write = AsyncMock()
+    monkeypatch.setattr(module.Text, "setMode", write)
+    c.async_save_settings = AsyncMock()
+    async with c._device_lock:
+        task = asyncio.create_task(c.async_update_device())
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        write.assert_not_awaited()
+    await task
+    write.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_write_is_drained_before_return(coordinator):
+    c = coordinator
+    started, release = asyncio.Event(), asyncio.Event()
+    async def write():
+        started.set()
+        await release.wait()
+        return True
+    task = asyncio.create_task(c._device_call(write))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not c._device_tasks
+
+
+@pytest.mark.asyncio
+async def test_shutdown_rejects_queued_writes(coordinator):
+    c = coordinator
+    write = AsyncMock()
+    async with c._device_lock:
+        queued = asyncio.create_task(c._device_call(write))
+        await asyncio.sleep(0)
+        shutdown = asyncio.create_task(c.async_shutdown())
+        await asyncio.sleep(0)
+    await shutdown
+    assert await queued is False
+    write.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,args", [("uploadSingleRaw", ("unused.gif",)), ("uploadBatch", (["unused.gif"],))])
+async def test_upload_cancellation_propagates(method, args):
+    gif = Gif()
+    gif.conn = SimpleNamespace(connect=AsyncMock(side_effect=asyncio.CancelledError()))
+    with pytest.raises(asyncio.CancelledError):
+        await getattr(gif, method)(*args)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_at", [0, 1])
+async def test_batch_aborts_on_failed_setup(fail_at):
+    gif = Gif()
+    results = [True] * fail_at + [False]
+    gif.conn = SimpleNamespace(connect=AsyncMock(), send=AsyncMock(side_effect=results))
+    assert await gif.uploadBatch(["never-read.gif"]) is False
+    assert gif.conn.send.await_count == fail_at + 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "unavailable"])
+async def test_nonfinite_sensor_is_unavailable(coordinator, value):
+    coordinator.hass.states.async_set("sensor.co2", value)
+    assert coordinator._read_float_state("sensor.co2") is None
+
+
+@pytest.mark.asyncio
+async def test_invalid_path_reports_service_error(coordinator):
+    from homeassistant.exceptions import HomeAssistantError
+    with pytest.raises(HomeAssistantError, match="Path does not exist"):
+        await coordinator.async_display_gif("/no-such-idotmatrix-file.gif")
+
+
+@pytest.mark.asyncio
+async def test_queued_designer_callback_does_not_stop_new_mode(coordinator, monkeypatch):
+    c = coordinator
+    monkeypatch.setattr(c.hass, "async_create_task", asyncio.create_task)
+    c.async_update_device = AsyncMock()
+    task = c._schedule_refresh(c.async_update_device())
+    await c.async_stop_weather_mode()
+    await task
+    c.async_update_device.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_pending_refresh(coordinator):
+    c = coordinator
+    started = asyncio.Event()
+    async def render():
+        started.set()
+        await asyncio.Event().wait()
+    task = c._schedule_refresh(render())
+    await started.wait()
+    await c.async_shutdown()
+    assert task.cancelled()
+    assert not c._refresh_tasks
+
+
+@pytest.mark.asyncio
+async def test_disconnect_blocks_automatic_reconnection(coordinator, monkeypatch):
+    from homeassistant.exceptions import HomeAssistantError
+    c = coordinator
+    disconnect = AsyncMock()
+    monkeypatch.setattr(module.ConnectionManager(), "disconnect", disconnect)
+    await c.async_disconnect_device()
+    disconnect.assert_awaited_once()
+    write = AsyncMock()
+    with pytest.raises(HomeAssistantError, match="Reconnect"):
+        await c._device_call(write)
+    write.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_releases_bluetooth(coordinator, monkeypatch):
+    disconnect = AsyncMock()
+    monkeypatch.setattr(module.ConnectionManager(), "disconnect", disconnect)
+    await coordinator.async_shutdown()
+    disconnect.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_fullscreen_color_stops_dashboard_and_uses_native_command(coordinator, monkeypatch):
+    write = AsyncMock(return_value=True)
+    monkeypatch.setattr(module.FullscreenColor, "setMode", write)
+    coordinator._weather_cfg = {"weather_entity": "weather.test"}
+    assert await coordinator.async_show_color([255, 0, 0])
+    write.assert_awaited_once_with(255, 0, 0)
+    assert coordinator._weather_cfg is None
+
+
+@pytest.mark.asyncio
+async def test_repeated_images_do_not_clear_or_resend_identical_pixels(coordinator, monkeypatch):
+    from PIL import Image
+    mode, upload = AsyncMock(return_value=True), AsyncMock(return_value=True)
+    monkeypatch.setattr(module.IDMImage, "setMode", mode)
+    monkeypatch.setattr(module.IDMImage, "uploadProcessed", upload)
+    await coordinator._upload_image(Image.new("RGB", (32, 32), "red"), 32)
+    await coordinator._upload_image(Image.new("RGB", (32, 32), "red"), 32)
+    await coordinator._upload_image(Image.new("RGB", (32, 32), "blue"), 32)
+    mode.assert_awaited_once()
+    assert upload.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("previous", [False, True])
+async def test_perfect_fit_restores_previous_text_mode(coordinator, previous):
+    from custom_components.idotmatrix.switch import IDotMatrixAutosize
+    from custom_components.idotmatrix.const import CONF_MAC
+    entry = SimpleNamespace(data={CONF_MAC: "AA:BB:CC:DD:EE:FF"})
+    switch = IDotMatrixAutosize(coordinator, entry)
+    switch.async_write_ha_state = Mock()
+    coordinator.async_update_device = AsyncMock()
+    coordinator.text_settings["multiline"] = previous
+    await switch.async_turn_on()
+    assert coordinator.text_settings["multiline"] is True
+    await switch.async_turn_on()  # repeated requests must not lose the snapshot
+    await switch.async_turn_off()
+    assert coordinator.text_settings["multiline"] is previous
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [16, 32, 64])
+async def test_perfect_fit_renders_visible_text(coordinator, size):
+    settings = dict(coordinator.text_settings, autosize=True, screen_size=size)
+    image = await coordinator.hass.async_add_executor_job(coordinator._render_multiline_image, "Hello", settings)
+    assert image.size == (size, size)
+    assert image.getbbox() is not None
+
+
+@pytest.mark.asyncio
+async def test_registered_services_validate_and_report_failures(tmp_path, monkeypatch):
+    import custom_components.idotmatrix as integration
+    from custom_components.idotmatrix.storage import DesignStorage
+    from custom_components.idotmatrix.const import CONF_MAC, DOMAIN
+    from homeassistant.exceptions import HomeAssistantError
+    hass = HomeAssistant(str(tmp_path))
+    hass.config_entries = SimpleNamespace(async_forward_entry_setups=AsyncMock())
+    entry = SimpleNamespace(entry_id="service-test", options={}, data={CONF_MAC: "AA:BB:CC:DD:EE:FF"}, async_on_unload=Mock(), add_update_listener=Mock())
+    monkeypatch.setattr(IDotMatrixCoordinator, "async_load_settings", AsyncMock())
+    monkeypatch.setattr(IDotMatrixCoordinator, "async_config_entry_first_refresh", AsyncMock())
+    monkeypatch.setattr(DesignStorage, "async_load", AsyncMock())
+    assert await integration.async_setup_entry(hass, entry)
+    c = hass.data[DOMAIN][entry.entry_id]
+    c.async_show_color = AsyncMock(return_value=True)
+    c.async_start_co2_mode = AsyncMock(return_value=False)
+    await hass.services.async_call(DOMAIN, "show_color", {"color": [255, 0, 0]}, blocking=True)
+    c.async_show_color.assert_awaited_once_with([255, 0, 0])
+    with pytest.raises(HomeAssistantError, match="Display upload failed"):
+        await hass.services.async_call(DOMAIN, "show_co2", {"co2_entity": "sensor.test"}, blocking=True)
+    import voluptuous as vol
+    with pytest.raises(vol.Invalid):
+        await hass.services.async_call(DOMAIN, "display_gif", {"path": "x", "rotation_interval": 300}, blocking=True)
+    await c.async_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stop_gif_service_resets_native_carousel(coordinator, monkeypatch):
+    reset = AsyncMock(return_value=True)
+    monkeypatch.setattr(module.Common, "reset", reset)
+    coordinator._gif_cfg = {"path": "/media/gifs"}
+    coordinator._carousel_active = True
+    await coordinator.async_stop_gif_display()
+    reset.assert_awaited_once()
+    assert coordinator._gif_cfg is None
+    assert coordinator._carousel_active is False

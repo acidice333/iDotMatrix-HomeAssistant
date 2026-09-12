@@ -1,7 +1,7 @@
 """Button platform for iDotMatrix."""
 from __future__ import annotations
 
-import datetime
+from homeassistant.util import dt as dt_util
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -22,6 +22,8 @@ async def async_setup_entry(
     async_add_entities([
         IDotMatrixSyncTime(coordinator, entry),
         IDotMatrixClear(coordinator, entry),
+        IDotMatrixDisconnect(coordinator, entry),
+        IDotMatrixReconnect(coordinator, entry),
     ])
 
 class IDotMatrixSyncTime(IDotMatrixEntity, ButtonEntity):
@@ -36,8 +38,8 @@ class IDotMatrixSyncTime(IDotMatrixEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle the button press."""
-        now = datetime.datetime.now()
-        await Common().setTime(
+        now = dt_util.now()
+        await self.coordinator._device_call(Common().setTime,
             year=now.year,
             month=now.month,
             day=now.day,
@@ -59,4 +61,30 @@ class IDotMatrixClear(IDotMatrixEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Handle the button press."""
         # Set black screen
-        await FullscreenColor().setMode(0, 0, 0)
+        await self.coordinator.async_show_color([0, 0, 0])
+
+
+class IDotMatrixDisconnect(IDotMatrixEntity, ButtonEntity):
+    """Release the BLE connection until explicitly resumed."""
+    _attr_name = "Disconnect"
+    _attr_icon = "mdi:bluetooth-off"
+
+    @property
+    def unique_id(self):
+        return f"{self._mac}_disconnect"
+
+    async def async_press(self):
+        await self.coordinator.async_disconnect_device()
+
+
+class IDotMatrixReconnect(IDotMatrixEntity, ButtonEntity):
+    """Resume integration control after disconnecting."""
+    _attr_name = "Reconnect"
+    _attr_icon = "mdi:bluetooth-connect"
+
+    @property
+    def unique_id(self):
+        return f"{self._mac}_reconnect"
+
+    async def async_press(self):
+        await self.coordinator.async_reconnect_device()
