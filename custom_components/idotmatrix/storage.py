@@ -40,7 +40,7 @@ class DesignStorage:
         """Return a specific design by name."""
         return self._data.get("designs", {}).get(name)
 
-    def save_design(self, name: str, layers: list) -> None:
+    def save_design(self, name: str, layers: list, screen_size: int = 32, trigger_entity: str | None = None) -> None:
         """Save a design."""
         if self._data is None:
             self._data = {"designs": {}}
@@ -48,6 +48,8 @@ class DesignStorage:
         self._data["designs"][name] = {
             "name": name,
             "layers": layers,
+            "screen_size": screen_size,
+            "trigger_entity": trigger_entity,
             "updated_at": None # Could add timestamp if needed
         }
         self._async_schedule_save()

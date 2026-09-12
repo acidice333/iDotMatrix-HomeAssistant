@@ -86,6 +86,19 @@ def test_release_metadata_matches():
     root = Path(__file__).resolve().parents[1]
     version = json.loads((root / "custom_components/idotmatrix/manifest.json").read_text())["version"]
     assert f"## [{version}] - " in (root / "CHANGELOG.md").read_text()
-    assert f"v{version} " in (root / "custom_components/idotmatrix/www/idotmatrix-card.js").read_text()
+    assert f'"{version}"' in (root / "custom_components/idotmatrix/www/idotmatrix-card.js").read_text()
     if os.environ.get("GITHUB_REF_TYPE") == "tag":
         assert os.environ["GITHUB_REF_NAME"] == f"v{version}"
+
+
+def test_service_descriptions_have_unique_keys_and_required_sensors():
+    import yaml
+    class UniqueKeyLoader(yaml.SafeLoader):
+        def construct_mapping(self, node, deep=False):
+            keys = [self.construct_object(key) for key, _ in node.value]
+            assert len(keys) == len(set(keys)), f'Duplicate YAML keys: {keys}'
+            return super().construct_mapping(node, deep=deep)
+    root = Path(__file__).resolve().parents[1]
+    services = yaml.load((root / 'custom_components/idotmatrix/services.yaml').read_text(), Loader=UniqueKeyLoader)
+    assert services['show_co2']['fields']['co2_entity']['required'] is True
+    assert services['show_power']['fields']['power_entity']['required'] is True

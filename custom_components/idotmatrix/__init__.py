@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 import os
@@ -259,11 +260,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "type": "idotmatrix/save_design",
         "name": str,
         "layers": list,
+        vol.Optional("screen_size", default=32): vol.In([16, 32, 64]),
+        vol.Optional("trigger_entity", default=None): vol.Any(None, cv.entity_id),
     })
     @websocket_api.async_response
     async def websocket_save_design(hass, connection, msg):
         """Save a design."""
-        storage.save_design(msg["name"], msg["layers"])
+        storage.save_design(msg["name"], msg["layers"], msg["screen_size"], msg["trigger_entity"])
         connection.send_result(msg["id"])
 
     @websocket_api.websocket_command({
@@ -293,7 +296,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.error(f"Design '{design_name}' not found")
             return
 
-        face_config = {"layers": design["layers"]}
+        face_config = {key: design[key] for key in ("layers", "screen_size", "trigger_entity") if key in design}
         
         # Apply to all coordinators (similar logic to set_face)
         for coordinator in list(hass.data[DOMAIN].values()):
@@ -308,6 +311,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await coordinator.async_show_color(call.data["color"])
 
     hass.services.async_register(DOMAIN, "show_color", async_show_color, schema=service_schema("show_color"))
+
+    async def async_disconnect(call):
+        for coordinator in list(hass.data[DOMAIN].values()):
+            if isinstance(coordinator, IDotMatrixCoordinator):
+                await coordinator.async_disconnect_device()
+
+    async def async_reconnect(call):
+        for coordinator in list(hass.data[DOMAIN].values()):
+            if isinstance(coordinator, IDotMatrixCoordinator):
+                await coordinator.async_reconnect_device()
+
+    hass.services.async_register(DOMAIN, "disconnect", async_disconnect, schema=vol.Schema({}))
+    hass.services.async_register(DOMAIN, "reconnect", async_reconnect, schema=vol.Schema({}))
 
     # Register display_gif service
     async def async_display_gif(call):

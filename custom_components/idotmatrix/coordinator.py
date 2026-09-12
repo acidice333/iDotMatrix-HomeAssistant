@@ -210,8 +210,16 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
             return
 
         layers = face_config.get("layers", [])
+        if "screen_size" in face_config:
+            size = int(face_config["screen_size"])
+            if size not in (16, 32, 64):
+                raise HomeAssistantError("Screen size must be 16, 32, or 64")
+            self.text_settings["screen_size"] = size
         self.text_settings["mode"] = "advanced"
         self.text_settings["layers"] = layers
+        self.text_settings["trigger_entity"] = face_config.get("trigger_entity")
+        self.display_mode = DISPLAY_MODE_DESIGN
+        self.text_settings["display_mode"] = DISPLAY_MODE_DESIGN
 
         self._apply_face_tracking(face_config)
         
@@ -275,8 +283,9 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     async def async_set_display_mode(self, mode: str) -> None:
         """Update display mode and refresh entity tracking."""
         self.display_mode = mode
+        self.text_settings["display_mode"] = mode
         if mode == DISPLAY_MODE_DESIGN:
-            self._apply_face_tracking({"layers": self.text_settings.get("layers", [])})
+            self._apply_face_tracking({"layers": self.text_settings.get("layers", []), "trigger_entity": self.text_settings.get("trigger_entity")})
         else:
             self._clear_face_tracking()
 
@@ -669,6 +678,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
         if (data := await self._store.async_load()):
             _LOGGER.debug(f"Loaded persist settings: {data}")
             self.text_settings.update(data)
+            self.display_mode = self.text_settings.get("display_mode", self.display_mode)
 
     async def async_save_settings(self) -> None:
         """Save settings to storage."""
@@ -683,7 +693,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
         """Select legacy output and serialize its complete upload sequence."""
         await self._stop_modes_for_message()
         await self.async_stop_message_mode()
-        self._apply_face_tracking({"layers": self.text_settings.get("layers", [])})
+        self._apply_face_tracking({"layers": self.text_settings.get("layers", []), "trigger_entity": self.text_settings.get("trigger_entity")})
         return await self._device_call(self._async_update_device_locked)
 
     async def _async_update_device_locked(self) -> None:

@@ -19,7 +19,7 @@ async def test_lovelace_registration_current_and_legacy_data(tmp_path, modern):
     hass.data[DOMAIN] = {"_static_path_registered": True}
     hass.data["lovelace"] = SimpleNamespace(resources=resources) if modern else {"resources": resources}
     await _async_register_lovelace_resource(hass)
-    resources.async_create_item.assert_awaited_once_with({"res_type": "module", "url": "/idotmatrix/idotmatrix-card.js?v=1.3.0"})
+    resources.async_create_item.assert_awaited_once_with({"res_type": "module", "url": "/idotmatrix/idotmatrix-card.js?v=1.4.0"})
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,30 @@
+{
+  "name": "idotmatrix-homeassistant",
+  "version": "1.4.0",
+  "description": "Bundled iDotMatrix Home Assistant card and regression tests",
+  "scripts": {
+    "build": "esbuild frontend/idotmatrix-card.js --bundle --format=esm --minify --outfile=custom_components/idotmatrix/www/idotmatrix-card.js",
+    "test": "node --test tests/card/*.test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tukies/iDotMatrix-HomeAssistant.git"
+  },
+  "keywords": [],
+  "author": "Tukies and contributors",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/tukies/iDotMatrix-HomeAssistant/issues"
+  },
+  "homepage": "https://github.com/tukies/iDotMatrix-HomeAssistant#readme",
+  "dependencies": {
+    "lit": "^3.3.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "happy-dom": "^20.14.5",
+    "prettier": "^3.9.6"
+  },
+  "private": true
+}
