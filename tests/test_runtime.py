@@ -275,3 +275,37 @@ async def test_stop_gif_service_resets_native_carousel(coordinator, monkeypatch)
     reset.assert_awaited_once()
     assert coordinator._gif_cfg is None
     assert coordinator._carousel_active is False
+
+
+@pytest.mark.asyncio
+async def test_card_design_selects_designer_and_preserves_size_and_trigger(coordinator, monkeypatch):
+    from custom_components.idotmatrix.const import DISPLAY_MODE_DESIGN
+    coordinator.display_mode = 'text'
+    coordinator._async_update_device_locked = AsyncMock()
+    tracking = Mock(return_value=Mock())
+    monkeypatch.setattr(module, 'async_track_state_change_event', tracking)
+    await coordinator.async_set_face_config({'layers':[{'template':'Hello'}], 'screen_size':64, 'trigger_entity':'sensor.time'})
+    assert coordinator.display_mode == DISPLAY_MODE_DESIGN
+    assert coordinator.text_settings['screen_size'] == 64
+    assert coordinator.text_settings['trigger_entity'] == 'sensor.time'
+    assert 'sensor.time' in tracking.call_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_design_preferences_restore_after_restart(coordinator):
+    coordinator._store.async_load = AsyncMock(return_value={'display_mode':'design', 'trigger_entity':'sensor.time','screen_size':64})
+    await coordinator.async_load_settings()
+    assert coordinator.display_mode == 'design'
+    assert coordinator.text_settings['screen_size'] == 64
+
+
+@pytest.mark.asyncio
+async def test_saved_design_metadata_roundtrip(coordinator):
+    from custom_components.idotmatrix.storage import DesignStorage
+    storage = DesignStorage(coordinator.hass)
+    storage._async_schedule_save = Mock()
+    storage.save_design('Clock', [{'template':'Hi'}], 64, 'sensor.time')
+    saved = storage.get_design('Clock')
+    assert saved['screen_size'] == 64
+    assert saved['trigger_entity'] == 'sensor.time'
+    assert saved['layers'] == [{'template':'Hi'}]

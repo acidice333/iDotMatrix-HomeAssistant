@@ -206,7 +206,6 @@ show_co2:
   fields:
     co2_entity:
       required: true
-      required: false
       description: Sensor with the current CO2 concentration in ppm.
       example: sensor.living_room_co2
       selector:
@@ -243,7 +242,6 @@ show_power:
   fields:
     power_entity:
       required: true
-      required: false
       description: Sensor with the current total active power in watts.
       example: sensor.home_power
       selector:
@@ -565,3 +563,11 @@ show_color:
       example: [255, 0, 0]
       selector:
         color_rgb:
+
+disconnect:
+  name: Disconnect panel
+  description: Release Bluetooth for the phone app and suspend writes until reconnect is called.
+
+reconnect:
+  name: Reconnect panel
+  description: Reconnect Bluetooth and resume Home Assistant control.

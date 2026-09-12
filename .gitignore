@@ -134,3 +134,6 @@ cython_debug/
 # IDEs
 .idea/
 .vscode/
+
+# Frontend build dependencies
+node_modules/

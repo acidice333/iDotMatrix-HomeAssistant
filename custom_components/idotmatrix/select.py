@@ -79,6 +79,10 @@ class IDotMatrixDisplayMode(IDotMatrixEntity, SelectEntity):
     def unique_id(self) -> str:
         return f"{self._mac}_display_mode"
 
+    @property
+    def current_option(self):
+        return DISPLAY_MODE_OPTIONS.get(self.coordinator.display_mode, self._attr_options[0])
+
     async def async_select_option(self, option: str) -> None:
         """Select display source."""
         mode_key = self._key_by_label.get(option, DISPLAY_MODE_DESIGN)

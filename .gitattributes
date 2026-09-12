@@ -1,0 +1,2 @@
+# Generated bundles contain whitespace inside Lit template strings.
+custom_components/idotmatrix/www/idotmatrix-card.js linguist-generated=true whitespace=-blank-at-eol

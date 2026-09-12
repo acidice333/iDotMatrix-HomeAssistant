@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.4.0] - 2026-09-12
+
+### Added
+- Responsive card sections for Designer, all nine display modes, GIF carousels, and messages, including their stop actions.
+- Connection controls, panel resolution selection, layer ordering, and all message styles, icons, fonts, colors, and duration options.
+- Frontend regression tests and a local browser harness that uses the real Python preview renderer while simulating device writes.
+
+### Fixed
+- Prevented repeated or leaked template subscriptions, including edits, layer removal, late responses, and reconnects.
+- Debounced preview rendering, rejected stale responses, and kept the last preview visible during refreshes.
+- Removed the duplicate send button; actions now await completion, prevent duplicate submissions, and display errors inline.
+- Made Designer preview and panel output use the same resolution. Sending a design selects Designer mode and preserves its explicit refresh trigger.
+- Saved designs now retain resolution and refresh metadata, with compatibility for older saved designs.
+- Corrected the card editor fields and documentation link, input labels, keyboard tabs, and mobile overflow.
+- Bundled Lit locally so the card no longer requires an external CDN.
+- Removed duplicate required-field keys from the CO₂ and power service descriptions.
+
+### Upgrade notes
+Update the integration, restart Home Assistant, and refresh your dashboard. The card resource version updates automatically. Existing card layers and saved designs remain supported. Dashboard modes and messages support 32×32 or 64×64; the Designer also supports 16×16.
+
+Thank you again to **[Sean Carolan (@scarolan)](https://github.com/scarolan)** for the GIF and dashboard features this card now exposes, and to the original client contributors credited in [CONTRIBUTORS.md](CONTRIBUTORS.md).
+
 ## [1.3.0] - 2026-09-12
 
 ### Added
@@ -46,3 +68,5 @@ Thanks also to **[@derkalle4](https://github.com/derkalle4)** for the original P
 [1.3.0]: https://github.com/tukies/iDotMatrix-HomeAssistant/compare/v1.1...v1.3.0
 [1.1]: https://github.com/tukies/iDotMatrix-HomeAssistant/releases/tag/v1.1
 [1.0.0]: https://github.com/tukies/iDotMatrix-HomeAssistant/releases/tag/v1.0.0
+
+[1.4.0]: https://github.com/tukies/iDotMatrix-HomeAssistant/compare/v1.3.0...v1.4.0

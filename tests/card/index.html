@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>iDotMatrix card review</title>
+  <style>
+    :root {
+      font-family: system-ui, sans-serif;
+      color-scheme: light;
+      --primary-text-color: #212121;
+      --secondary-text-color: #60646b;
+      --primary-color: #0288d1;
+      --divider-color: #dce0e4;
+      --secondary-background-color: #f5f6f7;
+      --card-background-color: #fff;
+      --error-color: #c62828;
+      --success-color: #237a39;
+    }
+    body {
+      margin: 0;
+      background: #f3f5f7;
+      color: var(--primary-text-color);
+    }
+    body.dark {
+      color-scheme: dark;
+      --primary-text-color: #e5e7eb;
+      --secondary-text-color: #a2a9b2;
+      --primary-color: #55b3eb;
+      --divider-color: #41454d;
+      --secondary-background-color: #282b32;
+      --card-background-color: #1c1e24;
+      --error-color: #ff8b8b;
+      --success-color: #80c99a;
+      background: #101217;
+    }
+    header {
+      max-width: 780px;
+      margin: 24px auto 16px;
+      padding: 0 16px;
+    }
+    h1 {
+      font-size: 20px;
+      margin: 0 0 6px;
+    }
+    p {
+      font-size: 13px;
+    }
+    #fixture {
+      width: min(780px, calc(100% - 32px));
+      margin: 0 auto 40px;
+    }
+    #fixture.mobile {
+      width: 320px;
+    }
+    ha-card {
+      display: block;
+      background: var(--card-background-color);
+      border: 1px solid var(--divider-color);
+      border-radius: 12px;
+    }
+    header button {
+      padding: 8px;
+      margin: 4px;
+    }
+    #result {
+      font-size: 13px;
+    }
+    ha-textfield,
+    ha-combo-box {
+      display: block;
+    }
+    mwc-button {
+      display: inline-block;
+    }
+    ha-icon {
+      display: none;
+    }
+  </style>
+  <header>
+    <h1>iDotMatrix card review</h1>
+    <p>Actual card and Python preview renderer. Device writes are simulated.</p>
+    <button id="theme">Light / dark</button
+    ><button id="width">Mobile / desktop</button
+    ><label><input id="fail" type="checkbox" />Simulate service failure</label>
+    <p id="result" role="status">Ready</p>
+  </header>
+  <main id="fixture"><idotmatrix-card></idotmatrix-card></main>
+  <script type="module">
+    customElements.define(
+      "ha-card",
+      class extends HTMLElement {
+        constructor() {
+          super();
+          this.attachShadow({ mode: "open" });
+          this.shadowRoot.innerHTML =
+            "<style>:host{display:block;background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:12px;box-sizing:border-box}</style><slot></slot>";
+        }
+      },
+    );
+    // Legacy controls for inspecting the original card. New controls are native.
+    for (const tag of ["ha-textfield", "ha-combo-box"])
+      customElements.define(
+        tag,
+        class extends HTMLElement {
+          constructor() {
+            super();
+            this.attachShadow({ mode: "open" });
+            this.shadowRoot.innerHTML = `<style>:host{min-width:0}label{display:grid;gap:5px;font:12px system-ui;color:var(--secondary-text-color)}input{box-sizing:border-box;width:100%;padding:10px;border:1px solid var(--divider-color);border-radius:4px;background:var(--card-background-color);color:var(--primary-text-color);font:14px system-ui}</style><label><span></span><input></label>`;
+            this.input = this.shadowRoot.querySelector("input");
+            this.input.addEventListener("input", () => {
+              this.dispatchEvent(
+                new CustomEvent("value-changed", {
+                  detail: { value: this.value },
+                  bubbles: true,
+                  composed: true,
+                }),
+              );
+            });
+          }
+          connectedCallback() {
+            this.shadowRoot.querySelector("span").textContent =
+              this.getAttribute("label");
+            this.input.type = this.getAttribute("type") || "text";
+            this.input.setAttribute(
+              "aria-label",
+              this.getAttribute("label") || "Input",
+            );
+          }
+          get value() {
+            return this.input.value;
+          }
+          set value(v) {
+            this.input.value = v ?? "";
+          }
+        },
+      );
+    customElements.define(
+      "mwc-button",
+      class extends HTMLElement {
+        constructor() {
+          super();
+          this.attachShadow({ mode: "open" });
+          this.shadowRoot.innerHTML =
+            "<style>button{padding:10px 14px;border:1px solid var(--divider-color);border-radius:4px;color:var(--primary-color);background:var(--card-background-color);font:14px system-ui}</style><button><slot></slot></button>";
+        }
+      },
+    );
+    await import("/card.js");
+    const card = document.querySelector("idotmatrix-card");
+    const states = {};
+    for (const [id, value] of Object.entries({
+      "weather.home": "sunny",
+      "sensor.room_temperature": "22.5",
+      "sensor.living_room_co2": "650",
+      "sensor.home_power": "1400",
+      "sensor.bitcoin_price": "60000",
+      "sensor.bitcoin_change": "2.1",
+      "climate.heating": "heat",
+      "climate.cooling": "off",
+    }))
+      states[id] = {
+        entity_id: id,
+        state: value,
+        attributes: { friendly_name: id.split(".")[1].replaceAll("_", " ") },
+      };
+    const services = await (await fetch("/services")).json();
+    window.calls = [];
+    window.subscriptions = new Set();
+    async function send(message) {
+      window.calls.push(message);
+      document.querySelector("#result").textContent =
+        `${message.service || message.type} · ${window.calls.length} requests`;
+      if (
+        document.querySelector("#fail").checked &&
+        message.service !== "render_preview"
+      )
+        throw new Error("Simulated Bluetooth connection failure");
+      const response = await fetch("/api", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(message),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      return data;
+    }
+    const hass = {
+      states,
+      services: { idotmatrix: services },
+      connection: {
+        sendMessagePromise: send,
+        subscribeMessage: async (callback, message) => {
+          const sub = { message };
+          window.subscriptions.add(sub);
+          callback(await send(message));
+          return () => window.subscriptions.delete(sub);
+        },
+      },
+      callService: async (domain, service, data) =>
+        send({ type: "call_service", domain, service, service_data: data }),
+      callWS: send,
+    };
+    card.setConfig({
+      type: "custom:idotmatrix-card",
+      title: "iDotMatrix",
+      screen_size: 32,
+    });
+    card.hass = hass;
+    window.card = card;
+    window.hass = hass;
+    document.querySelector("#theme").onclick = () =>
+      document.body.classList.toggle("dark");
+    document.querySelector("#width").onclick = () =>
+      document.querySelector("#fixture").classList.toggle("mobile");
+  </script>
+</html>

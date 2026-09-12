@@ -634,3 +634,52 @@ Send `[0, 0, 0]` for black, or select another display mode afterward. This uses 
 **Text Perfect Fit** temporarily enables multiline rendering. Turning it off restores your previous multiline setting. If updating from an older release with stuck multiline text, turn Perfect Fit off once to return to scrolling text.
 
 The Bluetooth client currently supports one active panel per Home Assistant instance. Address normalization and duplicate-entry checks protect repeated setup/discovery. Do not delete registry files to repair old duplicate devices; see the [historical issue audit](docs/ISSUE_AUDIT.md) for the remaining investigation.
+
+## Card controls (1.4+)
+
+The card has four sections: **Designer**, **Displays**, **GIFs**, and **Messages**. Displays exposes Clock, Weather, CO₂, Power, Thermostats, Bitcoin, Sun, Moon, and Solid color, with their stop/update controls. Panel connection controls are available below each section.
+
+Choose the panel size before sending. Designer supports 16, 32, and 64 pixels; dashboards and messages support 32 and 64. Saved designs retain the panel size and explicit refresh entity. Sending a design switches the integration to Designer output.
+
+Optional defaults can be stored in card configuration:
+
+```yaml
+type: custom:idotmatrix-card
+title: Office display
+screen_size: 64
+default_view: displays
+default_mode: weather
+gif_path: /media/idotmatrix/gifs/
+gif_interval: 10
+display_options:
+  weather:
+    weather_entity: weather.home
+    follow: true
+  co2:
+    co2_entity: sensor.living_room_co2
+  clock:
+    face: analog
+    hour24: true
+```
+
+The card is bundled with its runtime; no external CDN is needed. After updating, restart Home Assistant and refresh your dashboard browser.
+
+### Developing and testing the card
+
+Edit `frontend/idotmatrix-card.js` and `frontend/card-model.js`, then run:
+
+```sh
+npm ci
+npm test
+npm run build
+```
+
+Commit the rebuilt `custom_components/idotmatrix/www/idotmatrix-card.js` with source changes. CI checks that the bundle is current. Third-party runtime licenses are included alongside the bundle.
+
+For browser testing with the real Python preview renderer and simulated device writes:
+
+```sh
+PYTHONPATH=. .venv/bin/python scripts/card_dev_server.py
+```
+
+Open `http://127.0.0.1:8129`. The harness provides light/dark, width, and failure controls. It uses sample entities and temporary design data, not your live Home Assistant configuration or panel.
