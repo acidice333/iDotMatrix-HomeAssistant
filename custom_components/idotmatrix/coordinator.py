@@ -1112,6 +1112,17 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
         task.add_done_callback(completed)
         return task
 
+    async def async_stop_gif_display(self):
+        """Stop the device-managed carousel as well as local tracking."""
+        if self._gif_cfg is None:
+            return
+        await self.async_stop_gif_rotation()
+        if await self._device_call(Common().reset) is False:
+            raise HomeAssistantError("Could not stop the GIF display")
+        self._carousel_active = False
+        self._image_mode_active = False
+        self._image_signature = None
+
     async def async_disconnect_device(self):
         """Release Bluetooth so another app can connect, without reconnecting."""
         self._suspended = True

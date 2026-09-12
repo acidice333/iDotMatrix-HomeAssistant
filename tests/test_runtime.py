@@ -263,3 +263,15 @@ async def test_registered_services_validate_and_report_failures(tmp_path, monkey
     with pytest.raises(vol.Invalid):
         await hass.services.async_call(DOMAIN, "display_gif", {"path": "x", "rotation_interval": 300}, blocking=True)
     await c.async_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stop_gif_service_resets_native_carousel(coordinator, monkeypatch):
+    reset = AsyncMock(return_value=True)
+    monkeypatch.setattr(module.Common, "reset", reset)
+    coordinator._gif_cfg = {"path": "/media/gifs"}
+    coordinator._carousel_active = True
+    await coordinator.async_stop_gif_display()
+    reset.assert_awaited_once()
+    assert coordinator._gif_cfg is None
+    assert coordinator._carousel_active is False

@@ -334,7 +334,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Handle the stop_gif_rotation service call."""
         for coordinator in list(hass.data[DOMAIN].values()):
             if isinstance(coordinator, IDotMatrixCoordinator):
-                await coordinator.async_stop_gif_rotation()
+                await coordinator.async_stop_gif_display()
 
     hass.services.async_register(DOMAIN, "stop_gif_rotation", async_stop_gif_rotation)
 
