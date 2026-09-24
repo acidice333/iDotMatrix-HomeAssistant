@@ -1577,6 +1577,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                 price=price,
                 direction=self._btc_direction,
                 change_pct=change,
+                logo_filename=cfg.get("logo"),
             )
             signature = data.signature()
             if not force and signature == self._btc_signature:

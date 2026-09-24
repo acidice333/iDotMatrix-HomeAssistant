@@ -51,4 +51,6 @@ def service_schema(name):
     schema = vol.Schema(fields)
     if name == "show_thermostat":
         return vol.All(schema, cv.has_at_least_one_key("heat_entity", "cool_entity"))
+    if name == "show_bitcoin":
+        fields[vol.Optional("logo")] = vol.All(cv.string, vol.Length(min=0, max=128))
     return schema

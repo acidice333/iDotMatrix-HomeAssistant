@@ -25,8 +25,8 @@ DOWN_RED = (255, 90, 80)
 FLAT_WHITE = (235, 235, 235)
 LABEL = (170, 145, 105)
 
-_LOGO_PATH = os.path.join(os.path.dirname(__file__), "images",
-                          "bitcoin_logo.png")
+_DEFAULT_LOGO = "bitcoin_logo.png"
+_IMAGES_DIR = os.path.join(os.path.dirname(__file__), "images")
 
 # Fallback if the bundled logo asset is missing: 11x14 Bitcoin "B" bitmap
 _BTC_SYMBOL = (
@@ -61,14 +61,14 @@ def _fallback_logo(size: int) -> Image.Image:
 
 
 @lru_cache(maxsize=4)
-def _logo(size: int) -> Image.Image:
-    """The classic Bitcoin logo at the given pixel size (RGBA)."""
+def _logo(size: int, logo_filename: str = _DEFAULT_LOGO) -> Image.Image:
+    filename = os.path.basename(logo_filename or _DEFAULT_LOGO)
+    logo_path = os.path.join(_IMAGES_DIR, filename)
     try:
-        master = Image.open(_LOGO_PATH).convert("RGBA")
+        master = Image.open(logo_path).convert("RGBA")
         return master.resize((size, size), Image.LANCZOS)
     except Exception:
         return _fallback_logo(size)
-
 
 @dataclass
 class TickerData:
@@ -77,12 +77,14 @@ class TickerData:
     price: float
     direction: int = 0  # +1 last change up, -1 down, 0 flat/unknown
     change_pct: float | None = None
+    logo_filename: str = _DEFAULT_LOGO
 
     def signature(self) -> tuple:
         return (
             round(self.price),
             self.direction,
             None if self.change_pct is None else round(self.change_pct, 1),
+            self.logo_filename,
         )
 
 
@@ -145,7 +147,7 @@ def _layout_large(data: TickerData, size: int, f: int = 0,
     # Background embers first, so the coin and text draw over them
     _draw_embers(d, size, f / n)
 
-    logo = _logo(40)
+    logo = _logo(40, data.logo_filename)
     img.paste(logo, ((size - 40) // 2, 0), logo)
 
     d = ImageDraw.Draw(img)
@@ -176,7 +178,7 @@ def _layout_large(data: TickerData, size: int, f: int = 0,
 def _layout_small(data: TickerData, size: int) -> Image.Image:
     img = Image.new("RGB", (size, size), (0, 0, 0))
 
-    logo = _logo(15)
+    logo = _logo(15, data.logo_filename)
     img.paste(logo, ((size - 15) // 2, 0), logo)
 
     d = ImageDraw.Draw(img)
