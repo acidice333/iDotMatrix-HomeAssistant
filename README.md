@@ -598,7 +598,7 @@ logger:
     custom_components.idotmatrix: debug
 ```
 
-Include the downloaded log, integration version, panel model, and whether you use a local adapter or ESPHome proxy in the issue report. Capture the entire attempt through the final success or error, including any automatic retry. Remove the YAML debug setting when finished.
+Include the downloaded log, integration version, panel model, and whether you use a local adapter or ESPHome proxy in the issue report. Capture the entire attempt through the final success or error, including any automatic retry. Before posting logs publicly, review them and redact device addresses, BlueZ paths, and adapter/proxy identifiers, using consistent replacements so attempts can still be correlated. Remove the YAML debug setting when finished.
 
 **"Device unavailable" / "No backend found"**
 - Ensure the device is **disconnected** from the mobile app. It can only talk to one controller at a time.
