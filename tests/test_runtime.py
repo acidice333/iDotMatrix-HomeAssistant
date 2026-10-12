@@ -58,6 +58,18 @@ async def test_disconnect_and_reconnect_update_subscribed_entities(coordinator, 
 
 
 @pytest.mark.asyncio
+async def test_reconnect_reports_discovery_failure_and_disconnected_state(coordinator, monkeypatch):
+    from bleak.exc import BleakError
+    from homeassistant.exceptions import HomeAssistantError
+    connect = AsyncMock(side_effect=BleakError("Missing required write characteristic FA02"))
+    monkeypatch.setattr(module.ConnectionManager(), "connect", connect)
+    coordinator.async_set_updated_data({"connected": True})
+    with pytest.raises(HomeAssistantError, match="Missing required write characteristic FA02"):
+        await coordinator.async_reconnect_device()
+    assert coordinator.data == {"connected": False}
+
+
+@pytest.mark.asyncio
 async def test_stopped_render_cannot_replace_new_display(coordinator, monkeypatch):
     c = coordinator
     started, release = asyncio.Event(), asyncio.Event()

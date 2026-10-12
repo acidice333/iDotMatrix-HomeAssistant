@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.2] - 2026-10-12
+
+### Added
+- Optional custom logo filenames for the Bitcoin ticker, with default and missing-image fallbacks (#12).
+- Bluetooth debug logs include dependency versions, connection routing, GATT discovery, cache recovery, write/chunk progress, and failure tracebacks. Documented how to enable and download logs for issue reports.
+
+### Fixed
+- Validate the iDotMatrix write characteristic before accepting a Bluetooth connection. Missing or unresolved GATT services now trigger one cache clear and fresh discovery; persistent failures report the discovered UUIDs instead of a `NoneType` error. Writes still avoid replaying partially completed transfers (#13).
+
+### Upgrade notes
+Update through HACS and restart Home Assistant. For connection failures, enable iDotMatrix debug logging, reproduce the problem, and download the full log as described in the README.
+
 ## [1.4.1] - 2026-10-12
 
 ### Fixed
@@ -82,3 +94,5 @@ Thanks also to **[@derkalle4](https://github.com/derkalle4)** for the original P
 [1.4.0]: https://github.com/tukies/iDotMatrix-HomeAssistant/compare/v1.3.0...v1.4.0
 
 [1.4.1]: https://github.com/tukies/iDotMatrix-HomeAssistant/compare/v1.4.0...v1.4.1
+
+[1.4.2]: https://github.com/tukies/iDotMatrix-HomeAssistant/compare/v1.4.1...v1.4.2
