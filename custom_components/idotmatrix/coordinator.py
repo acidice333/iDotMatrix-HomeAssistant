@@ -676,7 +676,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     async def async_load_settings(self) -> None:
         """Load settings from storage."""
         if (data := await self._store.async_load()):
-            _LOGGER.debug(f"Loaded persist settings: {data}")
+            _LOGGER.debug("Loaded persisted settings keys: %s", sorted(data))
             self.text_settings.update(data)
             self.display_mode = self.text_settings.get("display_mode", self.display_mode)
 
@@ -1148,7 +1148,11 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     async def async_reconnect_device(self):
         """Resume user-requested writes after an explicit disconnect."""
         self._suspended = False
-        await self._device_call(ConnectionManager().connect)
+        try:
+            await self._device_call(ConnectionManager().connect)
+        except (BleakError, ConnectionError) as err:
+            self.async_set_updated_data({"connected": False})
+            raise HomeAssistantError(f"Could not connect to iDotMatrix: {err}") from err
         client = ConnectionManager().client
         if not client or not client.is_connected:
             raise HomeAssistantError("Device unavailable; check its power and Bluetooth range")

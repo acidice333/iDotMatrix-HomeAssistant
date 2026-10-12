@@ -584,6 +584,22 @@ This integration fully supports **ESPHome Bluetooth Proxies** and is the recomme
 
 ## Troubleshooting
 
+### Collecting Bluetooth debug logs
+
+In **Settings → Devices & services → iDotMatrix**, open the three-dot menu and select **Enable debug logging**. Reproduce the problem by pressing **Reconnect** and repeating the failing action, then select **Disable debug logging** to download the log. See Home Assistant's [debug logging instructions](https://www.home-assistant.io/docs/configuration/troubleshooting/#debug-logs-and-diagnostics).
+
+The integration's debug logs include dependency versions, connection attempts and cache settings, selected-device and last-advertisement sources, signal strength when available, the connected backend, discovered services and characteristic properties, write sizes and failed-chunk offsets, retry decisions, and exception tracebacks. These logs record transfer metadata rather than display payloads or raw advertisement data. The last advertisement source may differ from the adapter/proxy ultimately chosen by Home Assistant; the connected backend is logged separately.
+
+For failures during Home Assistant startup, add this to the existing `logger` configuration in `configuration.yaml` and restart:
+
+```yaml
+logger:
+  logs:
+    custom_components.idotmatrix: debug
+```
+
+Include the downloaded log, integration version, panel model, and whether you use a local adapter or ESPHome proxy in the issue report. Capture the entire attempt through the final success or error, including any automatic retry. Before posting logs publicly, review them and redact device addresses, BlueZ paths, and adapter/proxy identifiers, using consistent replacements so attempts can still be correlated. Remove the YAML debug setting when finished.
+
 **"Device unavailable" / "No backend found"**
 - Ensure the device is **disconnected** from the mobile app. It can only talk to one controller at a time.
 - If using a local adapter on macOS/Linux, ensure BlueZ is up to date.
