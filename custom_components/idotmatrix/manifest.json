@@ -20,8 +20,7 @@
     "issue_tracker": "https://github.com/tukies/iDotMatrix-HomeAssistant/issues",
     "requirements": [
         "bleak",
-        "Pillow",
         "bleak-retry-connector"
     ],
-    "version": "1.4.0"
+    "version": "1.4.1"
 }
