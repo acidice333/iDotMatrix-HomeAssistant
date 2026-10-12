@@ -15,10 +15,46 @@ from custom_components.idotmatrix.weather import WeatherData
 @pytest.fixture
 async def coordinator(tmp_path):
     hass = HomeAssistant(str(tmp_path))
-    entry = SimpleNamespace(options={}, entry_id="test", data={}, async_on_unload=Mock())
+    entry = SimpleNamespace(options={}, entry_id="test", data={}, async_on_unload=Mock(), pref_disable_polling=False)
     c = IDotMatrixCoordinator(hass, entry)
     yield c
     await c.async_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_entity_listener_schedules_home_assistant_polling(coordinator):
+    listener = Mock()
+    unsubscribe = coordinator.async_add_listener(listener)
+    try:
+        assert coordinator._unsub_refresh is not None
+        coordinator.async_set_updated_data({"connected": True})
+        listener.assert_called_once_with()
+        assert coordinator._unsub_refresh is not None
+    finally:
+        unsubscribe()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_and_reconnect_update_subscribed_entities(coordinator, monkeypatch):
+    c = coordinator
+    conn = module.ConnectionManager()
+    monkeypatch.setattr(conn, "disconnect", AsyncMock())
+    monkeypatch.setattr(conn, "connect", AsyncMock())
+    monkeypatch.setattr(conn, "client", SimpleNamespace(is_connected=True))
+    listener = Mock()
+    unsubscribe = c.async_add_listener(listener)
+    try:
+        await c.async_disconnect_device()
+        assert c.data == {"connected": False}
+        assert c._suspended is True
+        await c.async_reconnect_device()
+        assert c.data == {"connected": True}
+        assert c._suspended is False
+        assert listener.call_count == 2
+        conn.disconnect.assert_awaited_once()
+        conn.connect.assert_awaited_once()
+    finally:
+        unsubscribe()
 
 
 @pytest.mark.asyncio
@@ -148,7 +184,7 @@ async def test_queued_designer_callback_does_not_stop_new_mode(coordinator, monk
     c = coordinator
     monkeypatch.setattr(c.hass, "async_create_task", asyncio.create_task)
     c.async_update_device = AsyncMock()
-    task = c._schedule_refresh(c.async_update_device())
+    task = c._schedule_display_refresh(c.async_update_device())
     await c.async_stop_weather_mode()
     await task
     c.async_update_device.assert_not_awaited()
@@ -161,7 +197,7 @@ async def test_shutdown_cancels_pending_refresh(coordinator):
     async def render():
         started.set()
         await asyncio.Event().wait()
-    task = c._schedule_refresh(render())
+    task = c._schedule_display_refresh(render())
     await started.wait()
     await c.async_shutdown()
     assert task.cancelled()
