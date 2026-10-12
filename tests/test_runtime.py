@@ -293,6 +293,19 @@ async def test_registered_services_validate_and_report_failures(tmp_path, monkey
     c.async_start_co2_mode = AsyncMock(return_value=False)
     await hass.services.async_call(DOMAIN, "show_color", {"color": [255, 0, 0]}, blocking=True)
     c.async_show_color.assert_awaited_once_with([255, 0, 0])
+    c.async_start_bitcoin_mode = AsyncMock(return_value=True)
+    c.async_show_bitcoin = AsyncMock(return_value=True)
+    c._stop_modes_for_message = AsyncMock()
+    c.async_stop_message_mode = AsyncMock()
+    for follow in (True, False):
+        await hass.services.async_call(DOMAIN, "show_bitcoin", {
+            "price_entity": "sensor.ethereum_price", "logo": "ethereum.png", "follow": follow,
+        }, blocking=True)
+        expected = {"price_entity": "sensor.ethereum_price", "change_entity": None, "logo": "ethereum.png", "pixel_size": None}
+        if follow:
+            c.async_start_bitcoin_mode.assert_awaited_once_with(expected)
+        else:
+            c.async_show_bitcoin.assert_awaited_once_with(expected, force=True)
     with pytest.raises(HomeAssistantError, match="Display upload failed"):
         await hass.services.async_call(DOMAIN, "show_co2", {"co2_entity": "sensor.test"}, blocking=True)
     import voluptuous as vol
