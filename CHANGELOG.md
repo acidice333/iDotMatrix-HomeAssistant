@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Fixed entity setup and Disconnect/Reconnect failing with `_schedule_refresh() missing 1 required positional argument: 'coroutine'` by keeping display task scheduling separate from Home Assistant's polling scheduler (#13).
+
 ## [1.4.0] - 2026-09-12
 
 ### Added
