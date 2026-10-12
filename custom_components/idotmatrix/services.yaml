@@ -163,6 +163,16 @@ show_bitcoin:
     (green up, red down). By default the display keeps updating
     automatically when the price changes.
   fields:
+    logo:
+      required: false
+      description: >
+        Logo filename from custom_components/idotmatrix/images/.
+        Defaults to bitcoin_logo.png. If the file is missing, the built-in
+        fallback text Bitcoin logo is used.
+      default: bitcoin_logo.png
+      example: ethereum.png
+      selector:
+        text:
     price_entity:
       required: false
       description: Sensor with the current USD price. Defaults to sensor.bitcoin_price.

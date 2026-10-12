@@ -408,6 +408,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         cfg = {
             "price_entity": call.data.get("price_entity", "sensor.bitcoin_price"),
             "change_entity": call.data.get("change_entity"),
+            "logo": call.data.get("logo"),
             "pixel_size": call.data.get("pixel_size"),
         }
         follow = call.data.get("follow", True)
