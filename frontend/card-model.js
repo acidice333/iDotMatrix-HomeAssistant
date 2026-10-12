@@ -1,7 +1,7 @@
 let nextId = 0;
 const uniqueId = () =>
   globalThis.crypto?.randomUUID?.() || `layer-${Date.now()}-${nextId++}`;
-export const VERSION = "1.4.0";
+export const VERSION = "1.4.1";
 export const VIEWS = ["designer", "displays", "gifs", "messages"];
 export const MODES = {
   clock: {

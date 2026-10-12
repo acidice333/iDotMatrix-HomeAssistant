@@ -295,7 +295,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
         entity_id = event.data.get("entity_id")
         _LOGGER.debug(f"[iDotMatrix] Entity {entity_id} changed, re-rendering face")
         # Schedule async update
-        self._schedule_refresh(self.async_update_device())
+        self._schedule_display_refresh(self.async_update_device())
 
 
     async def _render_face(self, layers: list, screen_size: int) -> Image.Image:
@@ -1106,8 +1106,8 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
                 raise HomeAssistantError("Device disconnected; press Reconnect before sending updates")
             return await fn(*args, **kwargs)
 
-    def _schedule_refresh(self, coroutine):
-        """Own refresh tasks and discard callbacks from an earlier mode."""
+    def _schedule_display_refresh(self, coroutine):
+        """Own display tasks without overriding HA's polling scheduler."""
         generation = self._mode_generation
         async def run():
             if self._closing or generation != self._mode_generation:
@@ -1527,12 +1527,12 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     def _weather_debounced_refresh(self, _now) -> None:
         self._weather_debounce_unsub = None
         if self._weather_cfg:
-            self._schedule_refresh(self.async_show_weather(self._weather_cfg))
+            self._schedule_display_refresh(self.async_show_weather(self._weather_cfg))
 
     @callback
     def _on_weather_timer(self, _now) -> None:
         if self._weather_cfg:
-            self._schedule_refresh(self.async_show_weather(self._weather_cfg))
+            self._schedule_display_refresh(self.async_show_weather(self._weather_cfg))
 
     async def async_stop_weather_mode(self) -> None:
         """Stop weather mode tracking."""
@@ -1644,7 +1644,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     def _btc_debounced_refresh(self, _now) -> None:
         self._btc_debounce_unsub = None
         if self._btc_cfg:
-            self._schedule_refresh(self.async_show_bitcoin(self._btc_cfg))
+            self._schedule_display_refresh(self.async_show_bitcoin(self._btc_cfg))
 
     async def async_stop_bitcoin_mode(self) -> None:
         """Stop Bitcoin ticker tracking."""
@@ -1740,7 +1740,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     def _co2_debounced_refresh(self, _now) -> None:
         self._co2_debounce_unsub = None
         if self._co2_cfg:
-            self._schedule_refresh(self.async_show_co2(self._co2_cfg))
+            self._schedule_display_refresh(self.async_show_co2(self._co2_cfg))
 
     async def async_stop_co2_mode(self) -> None:
         """Stop CO2 gauge tracking."""
@@ -1847,7 +1847,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     def _power_throttled_refresh(self, _now) -> None:
         self._power_throttle_unsub = None
         if self._power_cfg:
-            self._schedule_refresh(self.async_show_power(self._power_cfg))
+            self._schedule_display_refresh(self.async_show_power(self._power_cfg))
 
     async def async_stop_power_mode(self) -> None:
         """Stop power gauge tracking."""
@@ -1948,7 +1948,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     def _thermostat_debounced_refresh(self, _now) -> None:
         self._thermostat_debounce_unsub = None
         if self._thermostat_cfg:
-            self._schedule_refresh(
+            self._schedule_display_refresh(
                 self.async_show_thermostat(self._thermostat_cfg)
             )
 
@@ -2088,7 +2088,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     @callback
     def _on_sun_minute(self, _now) -> None:
         if self._sun_cfg:
-            self._schedule_refresh(self.async_show_sun(self._sun_cfg))
+            self._schedule_display_refresh(self.async_show_sun(self._sun_cfg))
 
     async def async_stop_sun_mode(self) -> None:
         """Stop sun arc tracking."""
@@ -2162,7 +2162,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     @callback
     def _on_moon_hour(self, _now) -> None:
         if self._moon_cfg:
-            self._schedule_refresh(self.async_show_moon(self._moon_cfg))
+            self._schedule_display_refresh(self.async_show_moon(self._moon_cfg))
 
     async def async_stop_moon_mode(self) -> None:
         """Stop moon phase tracking."""
@@ -2295,7 +2295,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     @callback
     def _on_message_expired(self, _now) -> None:
         self._message_unsub = None
-        self._schedule_refresh(self.async_end_message())
+        self._schedule_display_refresh(self.async_end_message())
 
     async def async_end_message(self) -> None:
         """End the current message and bring back what was showing."""
@@ -2433,7 +2433,7 @@ class IDotMatrixCoordinator(DataUpdateCoordinator):
     @callback
     def _on_clock_minute(self, _now) -> None:
         if self._clock_cfg:
-            self._schedule_refresh(self.async_show_clock(self._clock_cfg))
+            self._schedule_display_refresh(self.async_show_clock(self._clock_cfg))
 
     async def async_stop_clock_mode(self) -> None:
         """Stop clock tracking."""

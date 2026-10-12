@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.4.1] - 2026-10-12
+
+### Fixed
+- Fixed entity setup and Disconnect/Reconnect failing with `_schedule_refresh() missing 1 required positional argument: 'coroutine'` by keeping display task scheduling separate from Home Assistant's polling scheduler (#13).
+
+- Removed the redundant Pillow manifest requirement to satisfy current Hassfest validation; Pillow is supplied by Home Assistant.
+
+### Upgrade notes
+Update through HACS and restart Home Assistant to load the connection fix.
+
 ## [1.4.0] - 2026-09-12
 
 ### Added
@@ -70,3 +80,5 @@ Thanks also to **[@derkalle4](https://github.com/derkalle4)** for the original P
 [1.0.0]: https://github.com/tukies/iDotMatrix-HomeAssistant/releases/tag/v1.0.0
 
 [1.4.0]: https://github.com/tukies/iDotMatrix-HomeAssistant/compare/v1.3.0...v1.4.0
+
+[1.4.1]: https://github.com/tukies/iDotMatrix-HomeAssistant/compare/v1.4.0...v1.4.1
